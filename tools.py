@@ -270,3 +270,109 @@ def check_github_commits(repo_owner: str, repo_name: str, limit: int = 3) -> str
     except Exception as e:
         return f"⚠️ Errore durante la lettura delle API di GitHub: {str(e)}"
 
+
+def check_baserow_leads(limit: int = 3) -> str:
+    """
+    Controlla gli ultimi lead o contatti inseriti nella tabella Baserow di Nikita.
+    
+    Args:
+        limit: Il numero di record da mostrare (default 3).
+    """
+    token = os.environ.get("BASEROW_TOKEN")
+    table_id = os.environ.get("BASEROW_TABLE_CLIENTI_ID", "931646")
+    if not token or not table_id:
+        return "⚠️ Variabili Baserow (BASEROW_TOKEN o BASEROW_TABLE_CLIENTI_ID) mancanti."
+        
+    headers = {"Authorization": f"Token {token}"}
+    url = f"https://api.baserow.io/api/database/rows/table/{table_id}/?size={limit}&user_field_names=true"
+    
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            return f"Impossibile leggere da Baserow. Status: {response.status_code}"
+            
+        data = response.json()
+        rows = data.get("results", [])
+        if not rows:
+            return "Nessun record trovato su Baserow."
+            
+        output = f"📊 *Ultimi {len(rows)} record da Baserow (Tabella {table_id}):*\n\n"
+        for row in rows:
+            row_id = row.get("id")
+            output += f"🆔 *ID:* {row_id}\n"
+            for key, val in row.items():
+                if key in ("id", "order") or val is None or val == "":
+                    continue
+                if isinstance(val, dict) and "value" in val:
+                    val = val["value"]
+                elif isinstance(val, list):
+                    val = ", ".join([str(item.get("value", item)) if isinstance(item, dict) else str(item) for item in val])
+                output += f"📌 *{key}:* {val}\n"
+            output += "─" * 20 + "\n"
+        return output
+    except Exception as e:
+        return f"⚠️ Errore Baserow: {str(e)}"
+
+
+def check_supabase_logs(project: str = "TOM", table_name: str = "logs", limit: int = 5) -> str:
+    """
+    Legge gli ultimi record inseriti in una tabella Supabase (progetto 'BUN' o 'TOM') per monitorare errori, eventi o utenti.
+    
+    Args:
+        project: Il progetto da interrogare ('BUN' o 'TOM'). Default 'TOM'.
+        table_name: Il nome della tabella da leggere (es. 'logs', 'users'). Default 'logs'.
+        limit: Il numero massimo di righe da recuperare (default 5).
+    """
+    project = project.upper()
+    if project == "BUN":
+        url = os.environ.get("SUPABASE_BUN_URL")
+        key = os.environ.get("SUPABASE_BUN_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_BUN_KEY")
+    elif project == "TOM":
+        url = os.environ.get("SUPABASE_TOM_URL")
+        key = os.environ.get("SUPABASE_TOM_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_TOM_ANON_KEY")
+    else:
+        return f"⚠️ Progetto Supabase '{project}' non supportato. Usa 'BUN' o 'TOM'."
+        
+    if not url or not key:
+        return f"⚠️ Credenziali Supabase mancanti per il progetto {project}."
+        
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Range": f"0-{limit-1}"
+    }
+    
+    api_url = f"{url}/rest/v1/{table_name}?order=created_at.desc"
+    
+    try:
+        response = requests.get(api_url, headers=headers)
+        if response.status_code == 400 and "created_at" in response.text:
+            print("created_at not found, trying sorting by id.desc")
+            api_url = f"{url}/rest/v1/{table_name}?order=id.desc"
+            response = requests.get(api_url, headers=headers)
+            
+        if response.status_code == 400 and "id" in response.text:
+            print("id not found, trying query without ordering")
+            api_url = f"{url}/rest/v1/{table_name}"
+            response = requests.get(api_url, headers=headers)
+            
+        if response.status_code != 200:
+            return f"Impossibile leggere la tabella {table_name} su Supabase ({project}). Status: {response.status_code}"
+            
+        rows = response.json()
+        if not rows:
+            return f"Nessun record trovato nella tabella '{table_name}' del progetto Supabase ({project})."
+            
+        output = f"⚡ *Ultimi record della tabella '{table_name}' su Supabase ({project}):*\n\n"
+        for i, row in enumerate(rows):
+            output += f"🔹 *Record {i+1}:*\n"
+            for k, v in row.items():
+                if v is None or v == "":
+                    continue
+                output += f"  • *{k}:* {v}\n"
+            output += "─" * 15 + "\n"
+        return output
+        
+    except Exception as e:
+        return f"⚠️ Errore Supabase ({project}) sulla tabella {table_name}: {str(e)}"
+

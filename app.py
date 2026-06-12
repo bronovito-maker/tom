@@ -7,7 +7,7 @@ from slack_bolt.adapter.fastapi import SlackRequestHandler
 from google import genai  # Google GenAI SDK
 from google.genai import types  # For Part/bytes operations
 from openai import OpenAI  # OpenAI client compatible with DeepSeek
-from tools import create_calendar_event, check_recent_emails, search_channel_history, check_vercel_status, check_github_commits  # Helper tools
+from tools import create_calendar_event, check_recent_emails, search_channel_history, check_vercel_status, check_github_commits, check_baserow_leads, check_supabase_logs  # Helper tools
 
 # Load environment variables from .env file
 load_dotenv()
@@ -138,7 +138,7 @@ CHANNELS = {
         "agente": "jarvis",
         "provider": "gemini",
         "model": "gemini-3.1-flash-lite",
-        "system": "Sei Jarvis (tom), l'assistente personale esecutivo di Nikita. Il tuo compito è aiutarlo a gestire la sua agenda, i suoi progetti e le sue comunicazioni. Hai a disposizione questi strumenti (Tool):\n1. create_calendar_event per creare appuntamenti nel calendario.\n2. check_recent_emails per leggere le email recenti.\n3. search_channel_history per cercare nella cronologia dei messaggi del canale.\n4. check_vercel_status per controllare lo stato dell'ultimo deploy su Vercel.\n5. check_github_commits per controllare gli ultimi commit su GitHub.\n\nQUANDO l'utente ti chiede di fissare o spostare un appuntamento, una call o un sopralluogo, invoca create_calendar_event.\nQUANDO l'utente ti chiede se ci sono novità via email o di controllare le ultime email, invoca check_recent_emails.\nQUANDO l'utente ti chiede di cercare o fare ricerche su messaggi, decisioni o discussioni passate, invoca search_channel_history.\nQUANDO l'utente ti chiede informazioni sullo stato dei deploy, del sito o di Vercel, invoca check_vercel_status.\nQUANDO l'utente ti chiede degli ultimi commit o modifiche su GitHub, invoca check_github_commits. Se l'utente non specifica il repository, assumi che repo_owner sia 'bronovito-maker' e repo_name sia 'tom' come valori di default.\n\nRegole temporali (Contesto Corrente):\n- L'anno corrente è il 2026.\n- Oggi è Venerdì 12 Giugno 2026.\n- Se l'utente dice 'lunedì prossimo', calcola la data corretta (Lunedì 15 Giugno 2026).\n- Se l'utente non specifica l'anno, assumi sia il 2026.\n- Restituisci sempre le date e gli orari nel formato ISO 8601 standard (YYYY-MM-DDTHH:MM:SS).\n\nSe le informazioni fornite sono incomplete, chiedi chiarimenti in modo conciso prima di invocare il tool."
+        "system": "Sei Jarvis (tom), l'assistente personale esecutivo di Nikita. Il tuo compito è aiutarlo a gestire la sua agenda, i suoi progetti e le sue comunicazioni. Hai a disposizione questi strumenti (Tool):\n1. create_calendar_event per creare appuntamenti nel calendario.\n2. check_recent_emails per leggere le email recenti.\n3. search_channel_history per cercare nella cronologia dei messaggi del canale.\n4. check_vercel_status per controllare lo stato dell'ultimo deploy su Vercel.\n5. check_github_commits per controllare gli ultimi commit su GitHub.\n6. check_baserow_leads per controllare i lead/contatti su Baserow.\n7. check_supabase_logs per controllare i log/record di Supabase.\n\nQUANDO l'utente ti chiede di fissare o spostare un appuntamento, una call o un sopralluogo, invoca create_calendar_event.\nQUANDO l'utente ti chiede se ci sono novità via email o di controllare le ultime email, invoca check_recent_emails.\nQUANDO l'utente ti chiede di cercare o fare ricerche su messaggi, decisioni o discussioni passate, invoca search_channel_history.\nQUANDO l'utente ti chiede informazioni sullo stato dei deploy, del sito o di Vercel, invoca check_vercel_status.\nQUANDO l'utente ti chiede degli ultimi commit o modifiche su GitHub, invoca check_github_commits. Se l'utente non specifica il repository, assumi che repo_owner sia 'bronovito-maker' e repo_name sia 'tom' come valori di default.\nQUANDO l'utente ti chiede di verificare i lead o i contatti su Baserow, invoca check_baserow_leads.\nQUANDO l'utente ti chiede dei log, degli utenti o record su Supabase, invoca check_supabase_logs. I progetti Supabase configurati sono due: 'BUN' (Bun Riccione) e 'TOM' (Tom core/database principale). Se l'utente chiede i log senza specificare il progetto, chiedi quale intende o assumi 'TOM' come default.\n\nRegole temporali (Contesto Corrente):\n- L'anno corrente è il 2026.\n- Oggi è Venerdì 12 Giugno 2026.\n- Se l'utente dice 'lunedì prossimo', calcola la data corretta (Lunedì 15 Giugno 2026).\n- Se l'utente non specifica l'anno, assumi sia il 2026.\n- Restituisci sempre le date e gli orari nel formato ISO 8601 standard (YYYY-MM-DDTHH:MM:SS).\n\nSe le informazioni fornite sono incomplete, chiedi chiarimenti in modo conciso prima di invocare il tool."
     },
     "C0BABSUS9DJ": {
         "agente": "eni",
@@ -620,7 +620,9 @@ async def slack_events(request: Request):
 AVAILABLE_TOOLS = {
     "check_recent_emails": check_recent_emails,
     "create_calendar_event": create_calendar_event,
-    "search_channel_history": search_channel_history
+    "search_channel_history": search_channel_history,
+    "check_baserow_leads": check_baserow_leads,
+    "check_supabase_logs": check_supabase_logs
 }
 
 # Capture any text message sent to channels where the bot is a member
@@ -703,6 +705,8 @@ def handle_message_events(body, say, client):
                 tools_list.append(check_recent_emails)
                 tools_list.append(check_vercel_status)
                 tools_list.append(check_github_commits)
+                tools_list.append(check_baserow_leads)
+                tools_list.append(check_supabase_logs)
 
             # Call Google Gemini using robust helper with fallback
             gemini_response = call_gemini(
@@ -754,6 +758,14 @@ def handle_message_events(body, say, client):
                                 repo_owner=args_dict.get("repo_owner"),
                                 repo_name=args_dict.get("repo_name"),
                                 limit=args_dict.get("limit", 3)
+                            )
+                        elif tool_name == "check_baserow_leads":
+                            res = check_baserow_leads(limit=args_dict.get("limit", 3))
+                        elif tool_name == "check_supabase_logs":
+                            res = check_supabase_logs(
+                                project=args_dict.get("project", "TOM"),
+                                table_name=args_dict.get("table_name", "logs"),
+                                limit=args_dict.get("limit", 5)
                             )
                         else:
                             res = f"Tool {tool_name} executed."

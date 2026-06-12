@@ -42,16 +42,17 @@ def download_slack_file(url):
 
 # Helper to call Gemini with a robust fallback chain and tools support
 def call_gemini(model_name, contents, system_instruction, tools=None):
-    config_dict = {"system_instruction": system_instruction}
-    if tools:
-        config_dict["tools"] = tools
+    config_obj = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        tools=tools
+    )
 
     # Prova il modello principale richiesto (es. gemini-3.1-flash-lite)
     try:
         response = gemini_client.models.generate_content(
             model=model_name,
             contents=contents,
-            config=config_dict
+            config=config_obj
         )
         return response
     except Exception as e:
@@ -60,7 +61,7 @@ def call_gemini(model_name, contents, system_instruction, tools=None):
             response = gemini_client.models.generate_content(
                 model="gemini-2.5-flash-lite",
                 contents=contents,
-                config=config_dict
+                config=config_obj
             )
             return response
         except Exception as e2:
@@ -69,7 +70,7 @@ def call_gemini(model_name, contents, system_instruction, tools=None):
             response = gemini_client.models.generate_content(
                 model=fallback_pro,
                 contents=contents,
-                config=config_dict
+                config=config_obj
             )
             return response
 

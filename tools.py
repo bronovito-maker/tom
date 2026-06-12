@@ -648,7 +648,14 @@ def generate_handyman_quote(
 ) -> str:
     """
     Genera un file PDF professionale di preventivo per il servizio Nikituttofare,
-    lo salva temporaneamente e restituisce i dettagli per l'invio.
+    lo salva temporaneamente e restituisce il percorso del file PDF generato.
+    
+    Args:
+        customer_name: Nome del cliente (es. "Marco Neri").
+        city: Città di residenza/intervento (es. "Rimini").
+        address: Indirizzo completo (es. "via Dante 5").
+        items_json: Stringa JSON valida che rappresenta un array di oggetti con campi 'description' (str), 'details' (str) e 'price' (float). Esempio: '[{"description": "Sostituzione rubinetto cucina", "details": "", "price": 120.0}, {"description": "Manodopera", "details": "", "price": 80.0}]'.
+        notes: Note o condizioni aggiuntive opzionali (es. garanzie, validità).
     """
     import json
     from datetime import datetime

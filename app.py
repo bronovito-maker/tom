@@ -49,8 +49,8 @@ def call_gemini(model_name, contents, system_instruction):
         return response.text
     except Exception as e:
         if "503" in str(e) or "UNAVAILABLE" in str(e) or "high demand" in str(e).lower():
-            fallback_model = "gemini-2.5-flash"
-            print(f"⚠️ Model {model_name} unavailable due to high demand. Falling back to {fallback_model}. Error: {e}")
+            fallback_model = "gemini-2.0-flash"
+            print(f"⚠️ Model {model_name} unavailable. Falling back to {fallback_model}. Error: {e}")
             response = gemini_client.models.generate_content(
                 model=fallback_model,
                 contents=contents,
@@ -68,13 +68,13 @@ def describe_image_with_gemini(file_bytes, mimetype):
     ]
     try:
         response = gemini_client.models.generate_content(
-            model="gemini-3.5-flash",
+            model="gemini-2.5-flash",
             contents=contents
         )
         return response.text
     except Exception as e:
-        fallback_model = "gemini-2.5-flash"
-        print(f"⚠️ Failed to describe image with gemini-3.5-flash: {e}. Falling back to {fallback_model}.")
+        fallback_model = "gemini-2.0-flash"
+        print(f"⚠️ Failed to describe image with gemini-2.5-flash: {e}. Falling back to {fallback_model}.")
         response = gemini_client.models.generate_content(
             model=fallback_model,
             contents=contents
@@ -96,31 +96,32 @@ CHANNELS = {
         "model": "deepseek-v4-pro",
         "system": "Sei l'esperto tecnologico di Nikita. Analizzi log di errore, architetture cloud, database (Supabase, Baserow) e problemi sistemistici."
     },
-    "C_ID_COPY": {
+    "C0BA1NT1KEX": {
         "agente": "copy",
         "provider": "gemini",
-        "model": "gemini-3.5-flash",
+        "model": "gemini-2.5-flash",
         "system": "Sei il copywriter creativo di Nikita. Scrivi testi persuasivi, email commerciali e post per i clienti con un tono professionale ma accattivante."
     },
     "C_ID_ADV": {
         "agente": "adv",
         "provider": "gemini",
-        "model": "gemini-3.5-flash",
+        "model": "gemini-2.5-flash",
         "system": "Sei l'esperto di digital marketing e Google Ads di Nikita. Analizzi le performance delle campagne e proponi ottimizzazioni basate sui dati."
     },
     "C_ID_HANDYMAN": {
         "agente": "handyman",
         "provider": "gemini",
-        "model": "gemini-3.5-flash",
+        "model": "gemini-2.5-flash",
         "system": "Sei l'assistente tecnico handyman di Nikita. Aiutalo a strutturare preventivi di riparazione, idraulica ed elettrica per i clienti locali."
     }
 }
 
 DEFAULT_CONFIG = {
     "provider": "gemini",
-    "model": "gemini-3.5-flash",
+    "model": "gemini-2.5-flash",
     "system": "Sei Jarvis (tom), l'assistente personale esecutivo e segretario di Nikita. Sei brillante, conciso e pronto a rispondere a qualsiasi richiesta."
 }
+
 
 # Initialize FastAPI App
 api = FastAPI()

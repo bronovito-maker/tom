@@ -38,44 +38,87 @@ def download_slack_file(url):
     else:
         raise Exception(f"Failed to download file: HTTP {response.status_code}")
 
+# Helper to call Gemini with a stable fallback in case of high demand
+def call_gemini(model_name, contents, system_instruction):
+    try:
+        response = gemini_client.models.generate_content(
+            model=model_name,
+            contents=contents,
+            config={"system_instruction": system_instruction}
+        )
+        return response.text
+    except Exception as e:
+        if "503" in str(e) or "UNAVAILABLE" in str(e) or "high demand" in str(e).lower():
+            fallback_model = "gemini-2.5-flash"
+            print(f"⚠️ Model {model_name} unavailable due to high demand. Falling back to {fallback_model}. Error: {e}")
+            response = gemini_client.models.generate_content(
+                model=fallback_model,
+                contents=contents,
+                config={"system_instruction": system_instruction}
+            )
+            return response.text
+        else:
+            raise e
+
+# Helper to describe image with Gemini using a stable fallback
+def describe_image_with_gemini(file_bytes, mimetype):
+    contents = [
+        types.Part.from_bytes(data=file_bytes, mime_type=mimetype),
+        "Descrivi questa immagine in modo estremamente dettagliato per un assistente AI testuale, estraendo log, codice, o dettagli visivi rilevanti."
+    ]
+    try:
+        response = gemini_client.models.generate_content(
+            model="gemini-3.5-flash",
+            contents=contents
+        )
+        return response.text
+    except Exception as e:
+        fallback_model = "gemini-2.5-flash"
+        print(f"⚠️ Failed to describe image with gemini-3.5-flash: {e}. Falling back to {fallback_model}.")
+        response = gemini_client.models.generate_content(
+            model=fallback_model,
+            contents=contents
+        )
+        return response.text
+
 # 3. Channel Mapping Configuration
 # Sostituisci gli ID segnaposto (es. 'C_ID_DEV') con gli ID reali dei tuoi canali Slack
 CHANNELS = {
     "C_ID_DEV": {
         "agente": "dev",
         "provider": "deepseek",
-        "model": "deepseek-chat",
+        "model": "deepseek-v4-pro",
         "system": "Sei l'assistente Dev senior di Nikita. Scrivi codice pulito, ottimizzato e risolvi i bug spiegando la logica in modo conciso."
     },
     "C_ID_TECH": {
         "agente": "tech",
         "provider": "deepseek",
-        "model": "deepseek-chat",
+        "model": "deepseek-v4-pro",
         "system": "Sei l'esperto tecnologico di Nikita. Analizzi log di errore, architetture cloud, database (Supabase, Baserow) e problemi sistemistici."
     },
     "C_ID_COPY": {
         "agente": "copy",
         "provider": "gemini",
-        "model": "gemini-2.5-flash",
+        "model": "gemini-3.5-flash",
         "system": "Sei il copywriter creativo di Nikita. Scrivi testi persuasivi, email commerciali e post per i clienti con un tono professionale ma accattivante."
     },
     "C_ID_ADV": {
         "agente": "adv",
         "provider": "gemini",
-        "model": "gemini-2.5-flash",
+        "model": "gemini-3.5-flash",
         "system": "Sei l'esperto di digital marketing e Google Ads di Nikita. Analizzi le performance delle campagne e proponi ottimizzazioni basate sui dati."
     },
     "C_ID_HANDYMAN": {
         "agente": "handyman",
         "provider": "gemini",
-        "model": "gemini-2.5-flash",
+        "model": "gemini-3.5-flash",
         "system": "Sei l'assistente tecnico handyman di Nikita. Aiutalo a strutturare preventivi di riparazione, idraulica ed elettrica per i clienti locali."
     }
 }
 
 DEFAULT_CONFIG = {
     "provider": "gemini",
-    "model": "gemini-2.5-flash",
+    "model": "gemini-3.5-flash",
     "system": "Sei Jarvis (tom), l'assistente personale esecutivo e segretario di Nikita. Sei brillante, conciso e pronto a rispondere a qualsiasi richiesta."
 }
 
@@ -141,13 +184,12 @@ def handle_message_events(body, say):
             else:
                 gemini_contents.append("Analizza l'allegato fornito.")
 
-            # Call Google Gemini
-            response = gemini_client.models.generate_content(
-                model=config["model"],
+            # Call Google Gemini using robust helper with fallback
+            risposta_ai = call_gemini(
+                model_name=config["model"],
                 contents=gemini_contents,
-                config={"system_instruction": config["system"]}
+                system_instruction=config["system"]
             )
-            risposta_ai = response.text
 
         elif config["provider"] == "deepseek":
             # DeepSeek does not natively support multimodal image input.
@@ -163,16 +205,10 @@ def handle_message_events(body, say):
                 try:
                     file_bytes = download_slack_file(url)
                     if mimetype.startswith("image/"):
-                        # Ask Gemini to describe the image
+                        # Ask Gemini to describe the image using robust helper
                         print(f"Generating Gemini description for image: {name}")
-                        desc_res = gemini_client.models.generate_content(
-                            model="gemini-2.5-flash",
-                            contents=[
-                                types.Part.from_bytes(data=file_bytes, mime_type=mimetype),
-                                "Descrivi questa immagine in modo estremamente dettagliato per un assistente AI testuale, estraendo log, codice, o dettagli visivi rilevanti."
-                            ]
-                        )
-                        deepseek_prompt_parts.append(f"\n[Descrizione visiva dell'allegato '{name}']:\n{desc_res.text}\n")
+                        image_description = describe_image_with_gemini(file_bytes, mimetype)
+                        deepseek_prompt_parts.append(f"\n[Descrizione visiva dell'allegato '{name}']:\n{image_description}\n")
                     elif mimetype.startswith("text/") or mimetype in ("application/json", "application/javascript", "text/plain") or name.endswith(('.log', '.py', '.js', '.ts', '.html', '.css', '.json', '.txt')):
                         text_content = file_bytes.decode("utf-8", errors="ignore")
                         deepseek_prompt_parts.append(f"\n[Contenuto file allegato '{name}']:\n```\n{text_content}\n```\n")

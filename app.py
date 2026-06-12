@@ -97,15 +97,15 @@ def describe_image_with_gemini(file_bytes, mimetype):
             return response.text
 
 # 3. Channel Mapping Configuration
-# Sostituisci gli ID segnaposto (es. 'C_ID_DEV') con gli ID reali dei tuoi canali Slack
+# Mappatura dei canali reali del tuo Slack con i relativi agenti, modelli e prompt di sistema
 CHANNELS = {
-    "C_ID_DEV": {
+    "C0BB2CGF23S": {
         "agente": "dev",
         "provider": "deepseek",
         "model": "deepseek-v4-pro",
         "system": "Sei l'assistente Dev senior di Nikita. Scrivi codice pulito, ottimizzato e risolvi i bug spiegando la logica in modo conciso."
     },
-    "C_ID_TECH": {
+    "C0BA8437FAN": {
         "agente": "tech",
         "provider": "deepseek",
         "model": "deepseek-v4-pro",
@@ -123,11 +123,17 @@ CHANNELS = {
         "model": "gemini-3.1-flash-lite",
         "system": "Sei l'esperto di digital marketing e Google Ads di Nikita. Analizzi le performance delle campagne e proponi ottimizzazioni basate sui dati."
     },
-    "C_ID_HANDYMAN": {
+    "C0BA846TML2": {
         "agente": "handyman",
         "provider": "gemini",
         "model": "gemini-3.1-flash-lite",
         "system": "Sei l'assistente tecnico handyman di Nikita. Aiutalo a strutturare preventivi di riparazione, idraulica ed elettrica per i clienti locali."
+    },
+    "C0BA1NX5Q03": {
+        "agente": "jarvis",
+        "provider": "gemini",
+        "model": "gemini-3.1-flash-lite",
+        "system": "Sei Jarvis (tom), l'assistente personale esecutivo e segretario di Nikita. Sei brillante, conciso e pronto a rispondere a qualsiasi richiesta."
     }
 }
 

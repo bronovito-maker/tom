@@ -895,6 +895,7 @@ def handle_message_events(body, say, client):
                                 days=args_dict.get("days", 7)
                             )
                         elif tool_name == "generate_handyman_quote":
+                            print(f"DEBUG: Calling generate_handyman_quote for {args_dict.get('customer_name')}")
                             res = generate_handyman_quote(
                                 customer_name=args_dict.get("customer_name"),
                                 city=args_dict.get("city"),
@@ -902,18 +903,24 @@ def handle_message_events(body, say, client):
                                 items_json=args_dict.get("items_json"),
                                 notes=args_dict.get("notes")
                             )
+                            print(f"DEBUG: generate_handyman_quote returned path: {res}")
                             # If result is a file path, upload to Slack
                             if res and res.startswith("/tmp/") and res.endswith(".pdf"):
                                 try:
-                                    client.files_upload_v2(
+                                    print(f"DEBUG: Attempting to upload PDF to channel {channel_id}...")
+                                    upload_res = client.files_upload_v2(
                                         channel=channel_id,
                                         file=res,
                                         filename=os.path.basename(res),
                                         initial_comment="📄 Ecco il tuo preventivo!"
                                     )
+                                    print(f"DEBUG: Upload succeeded. Slack file ID: {upload_res.get('file', {}).get('id')}")
                                     res = "✅ Preventivo PDF generato e caricato nel canale!"
                                 except Exception as upload_err:
+                                    print(f"DEBUG: Upload failed: {upload_err}")
                                     res = f"⚠️ PDF generato ma upload fallito: {upload_err}"
+                            else:
+                                print("DEBUG: Result is not a /tmp/*.pdf path. Skipping upload.")
                         else:
                             res = f"Tool {tool_name} executed."
                             

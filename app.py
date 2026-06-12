@@ -671,27 +671,25 @@ async def startup_event():
     else:
         print("No gobject found in standard paths.")
         
-    # Subprocess fast search in /nix
+    # Subprocess fast search in standard and opt directories
     import subprocess
     try:
-        print("Searching for libgobject-2.0.so.0 in /nix...")
+        print("OS release info:")
+        os_info = subprocess.check_output(["cat", "/etc/os-release"], text=True)
+        print(os_info)
+    except Exception as os_err:
+        print("Error reading /etc/os-release:", os_err)
+
+    try:
+        print("Searching for libgobject-2.0.so.0 in /usr, /lib, /opt...")
         nix_gobjects = subprocess.check_output(
-            ["find", "/nix/store", "-name", "libgobject-2.0.so.0", "-print", "-quit"], 
+            ["find", "/usr", "/lib", "/opt", "-name", "libgobject-2.0.so.0", "-print", "-quit"], 
             text=True, 
             timeout=10
         )
-        print("Find libgobject in nix results:", nix_gobjects.strip())
-        
-        # Also search for libpango
-        print("Searching for libpango-1.0.so.0 in /nix...")
-        nix_pango = subprocess.check_output(
-            ["find", "/nix/store", "-name", "libpango-1.0.so.0", "-print", "-quit"], 
-            text=True, 
-            timeout=10
-        )
-        print("Find libpango in nix results:", nix_pango.strip())
+        print("Find libgobject results:", nix_gobjects.strip())
     except Exception as search_err:
-        print("Error searching nix store:", search_err)
+        print("Error searching /usr, /lib, /opt:", search_err)
         
     print("=========================")
 

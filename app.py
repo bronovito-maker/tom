@@ -1009,6 +1009,11 @@ def handle_message_events(body, say, client):
             
         else:
             risposta_ai = f"Errore: Provider {config['provider']} non supportato."
+            
+        # Clean up double asterisks to single asterisks for Slack bold formatting
+        if risposta_ai:
+            import re
+            risposta_ai = re.sub(r'\*\*(.*?)\*\*', r'*\1*', risposta_ai)
 
         # Say message in Slack channel
         if thread_ts:

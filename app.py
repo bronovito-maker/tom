@@ -1,6 +1,8 @@
 import os
 from dotenv import load_dotenv
+from fastapi import FastAPI, Request
 from slack_bolt import App
+from slack_bolt.adapter.fastapi import SlackRequestHandler
 
 # Load environment variables from .env file
 load_dotenv()
@@ -10,6 +12,22 @@ app = App(
     token=os.environ.get("SLACK_BOT_TOKEN"),
     signing_secret=os.environ.get("SLACK_SIGNING_SECRET")
 )
+
+# Initialize Slack Request Handler for FastAPI integration
+handler = SlackRequestHandler(app)
+
+# Initialize FastAPI App
+api = FastAPI()
+
+# Root endpoint for Railway HTTP Healthcheck
+@api.get("/")
+async def root():
+    return {"status": "ok", "message": "Jarvis Core is online"}
+
+# Webhook endpoint for Slack Events
+@api.post("/slack/events")
+async def slack_events(request: Request):
+    return await handler.handle(request)
 
 # Capture any text message sent to channels where the bot is a member
 @app.event("message")
@@ -38,6 +56,7 @@ def handle_message_events(body, logger):
     app.client.chat_postMessage(channel=channel_id, text=risposta)
 
 if __name__ == "__main__":
+    import uvicorn
     if not os.environ.get("SLACK_BOT_TOKEN"):
         print("❌ Error: SLACK_BOT_TOKEN environment variable not set.")
     elif not os.environ.get("SLACK_SIGNING_SECRET"):
@@ -45,5 +64,6 @@ if __name__ == "__main__":
     else:
         port = int(os.environ.get("PORT", 3000))
         print(f"⚡ Jarvis Core is online and listening to Slack events on port {port}!")
-        app.start(port=port)
+        uvicorn.run("app:api", host="0.0.0.0", port=port, reload=True)
+
 

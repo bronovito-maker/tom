@@ -670,6 +670,29 @@ async def startup_event():
         print("Found gobject in std paths:", std_gobjects)
     else:
         print("No gobject found in standard paths.")
+        
+    # Subprocess fast search in /nix
+    import subprocess
+    try:
+        print("Searching for libgobject-2.0.so.0 in /nix...")
+        nix_gobjects = subprocess.check_output(
+            ["find", "/nix/store", "-name", "libgobject-2.0.so.0", "-print", "-quit"], 
+            text=True, 
+            timeout=10
+        )
+        print("Find libgobject in nix results:", nix_gobjects.strip())
+        
+        # Also search for libpango
+        print("Searching for libpango-1.0.so.0 in /nix...")
+        nix_pango = subprocess.check_output(
+            ["find", "/nix/store", "-name", "libpango-1.0.so.0", "-print", "-quit"], 
+            text=True, 
+            timeout=10
+        )
+        print("Find libpango in nix results:", nix_pango.strip())
+    except Exception as search_err:
+        print("Error searching nix store:", search_err)
+        
     print("=========================")
 
 # Root endpoint for Railway HTTP Healthcheck

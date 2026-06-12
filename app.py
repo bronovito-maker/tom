@@ -44,7 +44,8 @@ def download_slack_file(url):
 def call_gemini(model_name, contents, system_instruction, tools=None):
     config_obj = types.GenerateContentConfig(
         system_instruction=system_instruction,
-        tools=tools
+        tools=tools,
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
     )
 
     # Prova il modello principale richiesto (es. gemini-3.1-flash-lite)
@@ -909,18 +910,31 @@ def handle_message_events(body, say, client):
                             # If result is a file path, upload to Slack
                             if res and res.startswith("/tmp/") and res.endswith(".pdf"):
                                 try:
-                                    print(f"DEBUG: Attempting to upload PDF to channel {channel_id}...")
+                                    print(f"DEBUG: Attempting to upload PDF to channel {channel_id} with thread_ts {thread_ts} (V2)...")
                                     upload_res = client.files_upload_v2(
                                         channel=channel_id,
                                         file=res,
                                         filename=os.path.basename(res),
-                                        initial_comment="📄 Ecco il tuo preventivo!"
+                                        initial_comment="📄 Ecco il tuo preventivo!",
+                                        thread_ts=thread_ts
                                     )
-                                    print(f"DEBUG: Upload succeeded. Slack file ID: {upload_res.get('file', {}).get('id')}")
+                                    print(f"DEBUG: V2 Upload succeeded. Slack file ID: {upload_res.get('file', {}).get('id')}")
                                     res = "✅ Preventivo PDF generato e caricato nel canale!"
                                 except Exception as upload_err:
-                                    print(f"DEBUG: Upload failed: {upload_err}")
-                                    res = f"⚠️ PDF generato ma upload fallito: {upload_err}"
+                                    print(f"DEBUG: V2 Upload failed: {upload_err}. Trying V1 fallback...")
+                                    try:
+                                        upload_res = client.files_upload(
+                                            channels=channel_id,
+                                            file=res,
+                                            filename=os.path.basename(res),
+                                            initial_comment="📄 Ecco il tuo preventivo!",
+                                            thread_ts=thread_ts
+                                        )
+                                        print("DEBUG: V1 Upload succeeded.")
+                                        res = "✅ Preventivo PDF generato e caricato nel canale (V1 fallback)!"
+                                    except Exception as v1_err:
+                                        print(f"DEBUG: V1 Upload also failed: {v1_err}")
+                                        res = f"⚠️ PDF generato ma upload fallito sia con V2 che con V1: {upload_err} | {v1_err}"
                             else:
                                 print("DEBUG: Result is not a /tmp/*.pdf path. Skipping upload.")
                         else:

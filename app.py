@@ -134,6 +134,12 @@ CHANNELS = {
         "provider": "gemini",
         "model": "gemini-3.1-flash-lite",
         "system": "Sei Jarvis (tom), l'assistente personale esecutivo e segretario di Nikita. Sei brillante, conciso e pronto a rispondere a qualsiasi richiesta."
+    },
+    "C_ID_ENI": {
+        "agente": "eni",
+        "provider": "deepseek",
+        "model": "deepseek-v4-pro",
+        "system": "Sei l'assistente dedicato ENI di Nikita. Lo aiuti ad analizzare consumi energetici, comprendere le fatture ENI, calcolare stime ed elaborare comunicazioni/reclami formali con ENI."
     }
 }
 

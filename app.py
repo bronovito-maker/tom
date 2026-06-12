@@ -959,7 +959,11 @@ def handle_message_events(body, say, client):
                     tools=tools_list
                 )
 
-            risposta_ai = gemini_response.text
+            try:
+                risposta_ai = gemini_response.text
+            except Exception as text_err:
+                print(f"⚠️ Could not read gemini_response.text: {text_err}")
+                risposta_ai = ""
 
         elif config["provider"] == "deepseek":
             # For DeepSeek, build the user prompt text for the current message
@@ -1018,16 +1022,23 @@ def handle_message_events(body, say, client):
         else:
             risposta_ai = f"Errore: Provider {config['provider']} non supportato."
             
+        # Fallback to default message if empty or None
+        if not risposta_ai or not risposta_ai.strip():
+            risposta_ai = "Richiesta completata con successo!"
+            
         # Clean up double asterisks to single asterisks for Slack bold formatting
         if risposta_ai:
             import re
             risposta_ai = re.sub(r'\*\*(.*?)\*\*', r'*\1*', risposta_ai)
 
-        # Say message in Slack channel
-        if thread_ts:
-            say(text=risposta_ai, thread_ts=thread_ts)
+        # Say message in Slack channel only if non-empty
+        if risposta_ai and risposta_ai.strip():
+            if thread_ts:
+                say(text=risposta_ai, thread_ts=thread_ts)
+            else:
+                say(risposta_ai)
         else:
-            say(risposta_ai)
+            print("⚠️ Warning: risposta_ai is empty or None. Not sending empty message to Slack.")
 
     except Exception as e:
         error_msg = f"⚠️ C'è stato un problema di comunicazione con l'agente ({config['provider']}): {str(e)}"

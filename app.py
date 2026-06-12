@@ -1,9 +1,11 @@
 import os
+import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from slack_bolt import App
 from slack_bolt.adapter.fastapi import SlackRequestHandler
 from google import genai  # Google GenAI SDK
+from google.genai import types  # For Part/bytes operations
 from openai import OpenAI  # OpenAI client compatible with DeepSeek
 
 # Load environment variables from .env file
@@ -25,6 +27,16 @@ deepseek_client = OpenAI(
     api_key=os.environ.get("DEEPSEEK_API_KEY"),
     base_url="https://api.deepseek.com"
 )
+
+# Helper function to download files from Slack
+def download_slack_file(url):
+    token = os.environ.get("SLACK_BOT_TOKEN")
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        return response.content
+    else:
+        raise Exception(f"Failed to download file: HTTP {response.status_code}")
 
 # 3. Channel Mapping Configuration
 # Sostituisci gli ID segnaposto (es. 'C_ID_DEV') con gli ID reali dei tuoi canali Slack
@@ -87,33 +99,102 @@ def handle_message_events(body, say):
     text = event.get("text")
     channel_id = event.get("channel")
     user = event.get("user")
+    files = event.get("files", [])
     
     # Avoid responding to itself
     if event.get("bot_id") is not None:
         return
 
-    print(f"🔹 Received message in channel {channel_id} from user {user}: {text}")
+    print(f"🔹 Received message in channel {channel_id} from user {user}: {text} (Attachments: {len(files)})")
 
     # Retrieve agent config based on channel
     config = CHANNELS.get(channel_id, DEFAULT_CONFIG)
     
     try:
         if config["provider"] == "gemini":
-            # Call Google Gemini using the new SDK
+            # Build content parts for Gemini
+            gemini_contents = []
+            
+            # Download files and add as Parts
+            for file_info in files:
+                mimetype = file_info.get("mimetype", "")
+                url = file_info.get("url_private_download", "")
+                name = file_info.get("name", "")
+                if not url:
+                    continue
+                try:
+                    file_bytes = download_slack_file(url)
+                    if mimetype.startswith("image/"):
+                        gemini_contents.append(types.Part.from_bytes(data=file_bytes, mime_type=mimetype))
+                    elif mimetype.startswith("text/") or mimetype in ("application/json", "application/javascript", "text/plain") or name.endswith(('.log', '.py', '.js', '.ts', '.html', '.css', '.json', '.txt')):
+                        text_content = file_bytes.decode("utf-8", errors="ignore")
+                        gemini_contents.append(f"\n[Contenuto file allegato '{name}']:\n```\n{text_content}\n```\n")
+                except Exception as dwn_err:
+                    print(f"Error downloading file {name}: {dwn_err}")
+            
+            # Add user prompt text
+            if text:
+                gemini_contents.append(text)
+            elif not gemini_contents:
+                say("Non ho rilevato testo o allegati leggibili.")
+                return
+            else:
+                gemini_contents.append("Analizza l'allegato fornito.")
+
+            # Call Google Gemini
             response = gemini_client.models.generate_content(
                 model=config["model"],
-                contents=text,
+                contents=gemini_contents,
                 config={"system_instruction": config["system"]}
             )
             risposta_ai = response.text
 
         elif config["provider"] == "deepseek":
-            # Call DeepSeek via OpenAI SDK compatibilities
+            # DeepSeek does not natively support multimodal image input.
+            # We construct a text-only prompt. If images are provided, we ask Gemini to describe them first.
+            deepseek_prompt_parts = []
+            
+            for file_info in files:
+                mimetype = file_info.get("mimetype", "")
+                url = file_info.get("url_private_download", "")
+                name = file_info.get("name", "")
+                if not url:
+                    continue
+                try:
+                    file_bytes = download_slack_file(url)
+                    if mimetype.startswith("image/"):
+                        # Ask Gemini to describe the image
+                        print(f"Generating Gemini description for image: {name}")
+                        desc_res = gemini_client.models.generate_content(
+                            model="gemini-2.5-flash",
+                            contents=[
+                                types.Part.from_bytes(data=file_bytes, mime_type=mimetype),
+                                "Descrivi questa immagine in modo estremamente dettagliato per un assistente AI testuale, estraendo log, codice, o dettagli visivi rilevanti."
+                            ]
+                        )
+                        deepseek_prompt_parts.append(f"\n[Descrizione visiva dell'allegato '{name}']:\n{desc_res.text}\n")
+                    elif mimetype.startswith("text/") or mimetype in ("application/json", "application/javascript", "text/plain") or name.endswith(('.log', '.py', '.js', '.ts', '.html', '.css', '.json', '.txt')):
+                        text_content = file_bytes.decode("utf-8", errors="ignore")
+                        deepseek_prompt_parts.append(f"\n[Contenuto file allegato '{name}']:\n```\n{text_content}\n```\n")
+                except Exception as dwn_err:
+                    print(f"Error processing file {name} for DeepSeek: {dwn_err}")
+
+            if text:
+                deepseek_prompt_parts.append(text)
+            elif not deepseek_prompt_parts:
+                say("Non ho rilevato testo o allegati leggibili.")
+                return
+            else:
+                deepseek_prompt_parts.append("Analizza l'allegato descritto sopra.")
+
+            full_deepseek_prompt = "\n".join(deepseek_prompt_parts)
+
+            # Call DeepSeek
             response = deepseek_client.chat.completions.create(
                 model=config["model"],
                 messages=[
                     {"role": "system", "content": config["system"]},
-                    {"role": "user", "content": text}
+                    {"role": "user", "content": full_deepseek_prompt}
                 ]
             )
             risposta_ai = response.choices[0].message.content
@@ -139,5 +220,6 @@ if __name__ == "__main__":
         port = int(os.environ.get("PORT", 3000))
         print(f"⚡ Jarvis Core is online and listening to Slack events on port {port}!")
         uvicorn.run("app:api", host="0.0.0.0", port=port, reload=True)
+
 
 

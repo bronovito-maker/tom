@@ -666,10 +666,43 @@ def generate_handyman_quote(
         
     data_oggi = datetime.now().strftime('%d/%m/%Y')
     
-    # Generate sequential-like quote number: N. [DayOfYear] - Anno [Year]
-    now = datetime.now()
-    day_of_year = now.strftime('%j')
-    num_preventivo = f"N. {day_of_year.zfill(3)} - Anno {now.year}"
+    # 1. Fetch Supabase credentials and compute next sequential number
+    url = os.environ.get("SUPABASE_TOM_URL")
+    key = os.environ.get("SUPABASE_TOM_SERVICE_ROLE_KEY")
+    
+    next_num = 1
+    current_year = datetime.now().year
+    
+    if url and key:
+        headers = {
+            "apikey": key,
+            "Authorization": f"Bearer {key}"
+        }
+        try:
+            # Query last 100 tickets created in current year to find highest quote number
+            api_url = f"{url}/rest/v1/tickets?select=meta_data&created_at=gte.{current_year}-01-01T00:00:00"
+            resp = requests.get(api_url, headers=headers)
+            if resp.status_code == 200:
+                tickets_data = resp.json()
+                max_num = 0
+                for ticket in tickets_data:
+                    m = ticket.get("meta_data")
+                    if m and isinstance(m, dict):
+                        q_num_str = m.get("quote_number")
+                        if q_num_str and f"Anno {current_year}" in q_num_str:
+                            try:
+                                parts = q_num_str.split(" - ")
+                                num_part = parts[0].replace("N. ", "").strip()
+                                num = int(num_part)
+                                if num > max_num:
+                                    max_num = num
+                            except Exception:
+                                pass
+                next_num = max_num + 1
+        except Exception as e:
+            print(f"DEBUG: Error fetching quote numbers: {e}")
+            
+    num_preventivo = f"N. {str(next_num).zfill(3)} - Anno {current_year}"
     
     # Calcolo dei totali
     totale_complessivo = sum(item.get('price', 0) for item in items)
@@ -991,10 +1024,90 @@ def generate_handyman_quote(
     try:
         from weasyprint import HTML
         HTML(string=html_template).write_pdf(output_path)
-        return output_path
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
         print(f"❌ WEASYPRINT ERROR:\n{tb}")
         return f"⚠️ Errore durante la compilazione del PDF: {str(e)}\n\nTraceback:\n{tb}"
+        
+    # 2. Link or create ticket on Supabase (Option A)
+    if url and key:
+        ticket_id = None
+        existing_meta_data = {}
+        headers = {
+            "apikey": key,
+            "Authorization": f"Bearer {key}"
+        }
+        try:
+            # Search for existing active ticket for this customer
+            from urllib.parse import quote
+            escaped_name = quote(customer_name)
+            cust_url = f"{url}/rest/v1/tickets?customer_name=ilike.{escaped_name}&order=created_at.desc&limit=1"
+            resp = requests.get(cust_url, headers=headers)
+            if resp.status_code == 200 and resp.json():
+                ticket = resp.json()[0]
+                ticket_id = ticket.get("id")
+                existing_meta_data = ticket.get("meta_data") or {}
+                print(f"DEBUG: Found existing ticket {ticket_id} for customer {customer_name}")
+        except Exception as search_err:
+            print(f"DEBUG: Error searching existing ticket: {search_err}")
+            
+        # Create new ticket if not found
+        if not ticket_id:
+            try:
+                print(f"DEBUG: No existing ticket found. Creating a new one for {customer_name}...")
+                new_ticket_payload = {
+                    "customer_name": customer_name,
+                    "description": f"Preventivo {num_preventivo} generato automaticamente.",
+                    "category": "generic",
+                    "city": city,
+                    "address": address,
+                    "price_range_max": totale_complessivo,
+                    "source": "phone_manual",
+                    "status": "new",
+                    "payment_status": "pending"
+                }
+                post_headers = {
+                    **headers,
+                    "Content-Type": "application/json",
+                    "Prefer": "return=representation"
+                }
+                create_url = f"{url}/rest/v1/tickets"
+                resp = requests.post(create_url, json=new_ticket_payload, headers=post_headers)
+                if resp.status_code in [200, 201] and resp.json():
+                    new_ticket = resp.json()[0]
+                    ticket_id = new_ticket.get("id")
+                    print(f"DEBUG: Created new ticket {ticket_id} for customer {customer_name}")
+            except Exception as create_err:
+                print(f"DEBUG: Error creating new ticket: {create_err}")
+                
+        # Update metadata of the ticket
+        if ticket_id:
+            try:
+                updated_meta = {
+                    **existing_meta_data,
+                    "quote_number": num_preventivo,
+                    "quote_date": data_oggi,
+                    "quote_pdf_filename": filename,
+                    "quote_items": items,
+                    "quote_total": totale_complessivo
+                }
+                patch_headers = {
+                    **headers,
+                    "Content-Type": "application/json"
+                }
+                update_url = f"{url}/rest/v1/tickets?id=eq.{ticket_id}"
+                update_payload = {
+                    "meta_data": updated_meta,
+                    "price_range_max": totale_complessivo
+                }
+                resp = requests.patch(update_url, json=update_payload, headers=patch_headers)
+                if resp.status_code in [200, 204]:
+                    print(f"DEBUG: Ticket {ticket_id} updated successfully with quote {num_preventivo}")
+                else:
+                    print(f"DEBUG: Failed to update ticket {ticket_id}: {resp.status_code} - {resp.text}")
+            except Exception as update_err:
+                print(f"DEBUG: Error updating ticket metadata: {update_err}")
+
+    return output_path
 

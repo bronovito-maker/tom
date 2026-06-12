@@ -52,8 +52,9 @@ def create_calendar_event(summary: str, start_time: str, end_time: str, descript
             },
         }
         
-        # Insert the event into 'primary' calendar
-        created_event = service.events().insert(calendarId='primary', body=event).execute()
+        # Insert the event into Nikita's calendar (shared with the service account)
+        calendar_id = os.environ.get("GOOGLE_CALENDAR_ID", "primary")
+        created_event = service.events().insert(calendarId=calendar_id, body=event).execute()
         print(f"Event created successfully: {created_event.get('htmlLink')}")
         return {
             "status": "success",
@@ -461,4 +462,64 @@ def create_handyman_ticket(
             
     except Exception as e:
         return f"⚠️ Errore di rete/codice durante la creazione del ticket: {str(e)}"
+
+
+def list_calendar_events(start_time: str, end_time: str) -> str:
+    """
+    Ritorna la lista degli eventi presenti nel calendario di Google di Nikita in un dato intervallo di tempo.
+    Utile per verificare la presenza di conflitti o se un appuntamento è già registrato.
+    
+    Args:
+        start_time: Data e ora di inizio ricerca in formato ISO (es. "2026-06-15T00:00:00").
+        end_time: Data e ora di fine ricerca in formato ISO (es. "2026-06-15T23:59:59").
+    """
+    import json
+    try:
+        # Load credentials
+        if os.path.exists(SERVICE_ACCOUNT_FILE):
+            creds = service_account.Credentials.from_service_account_file(
+                SERVICE_ACCOUNT_FILE, scopes=SCOPES
+            )
+        elif os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON"):
+            service_account_info = json.loads(os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON"))
+            creds = service_account.Credentials.from_service_account_info(
+                service_account_info, scopes=SCOPES
+            )
+        else:
+            return "⚠️ Errore Google Calendar: Credenziali non trovate."
+
+        # Build service
+        service = build('calendar', 'v3', credentials=creds)
+        
+        # Format timezone suffix if not present
+        if "T" in start_time and not start_time.endswith("Z") and "+" not in start_time and "-" not in start_time[10:]:
+            start_time = start_time + "+02:00"
+        if "T" in end_time and not end_time.endswith("Z") and "+" not in end_time and "-" not in end_time[10:]:
+            end_time = end_time + "+02:00"
+
+        # Read events from Nikita's calendar (shared with the service account)
+        calendar_id = os.environ.get("GOOGLE_CALENDAR_ID", "primary")
+        events_result = service.events().list(
+            calendarId=calendar_id,
+            timeMin=start_time,
+            timeMax=end_time,
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        
+        events = events_result.get('items', [])
+        if not events:
+            return f"Non ho trovato nessun evento in calendario tra il {start_time} e il {end_time}."
+            
+        output = f"📅 *Eventi in calendario trovati:*\n\n"
+        for event in events:
+            summary = event.get('summary', 'Senza titolo')
+            start = event.get('start', {}).get('dateTime') or event.get('start', {}).get('date')
+            end = event.get('end', {}).get('dateTime') or event.get('end', {}).get('date')
+            output += f"📌 *{summary}*\n⏰ *Inizio:* {start}\n⏰ *Fine:* {end}\n"
+            output += "─" * 15 + "\n"
+        return output
+        
+    except Exception as e:
+        return f"⚠️ Errore durante la lettura del calendario Google: {str(e)}"
 

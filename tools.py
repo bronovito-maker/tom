@@ -637,3 +637,138 @@ def check_ga_analytics(project: str = "ZIREL", days: int = 7) -> str:
 
     except Exception as e:
         return f"⚠️ Errore Google Analytics: {str(e)}"
+
+
+def generate_handyman_quote(
+    customer_name: str,
+    city: str,
+    address: str,
+    items_json: str, # Riceverà una stringa JSON con l'elenco dei lavori e prezzi
+    notes: str = None
+) -> str:
+    """
+    Genera un file PDF professionale di preventivo per il servizio Nikituttofare,
+    lo salva temporaneamente e restituisce i dettagli per l'invio.
+    """
+    import json
+    from datetime import datetime
+    try:
+        items = json.loads(items_json)
+    except Exception:
+        return "⚠️ Errore nel formato delle voci di spesa inviate a Tom."
+        
+    data_oggi = datetime.now().strftime('%d/%m/%Y')
+    # Numero preventivo fittizio basato su timestamp per l'univocità
+    num_preventivo = f"PV-{datetime.now().strftime('%Y-%M%S')}"
+    
+    # Calcolo dei totali
+    totale_complessivo = sum(item.get('price', 0) for item in items)
+    
+    # Costruzione dinamica delle righe della tabella in HTML
+    table_rows = ""
+    for item in items:
+        desc = item.get('description', '')
+        sub_desc = item.get('details', '')
+        price = item.get('price', 0)
+        table_rows += f"""
+        <tr>
+            <td><strong>{desc}</strong><br><span style="font-size: 9pt; color: #718096;">{sub_desc}</span></td>
+            <td class="text-right">1</td>
+            <td class="text-right">{price:,.2f} €</td>
+        </tr>
+        """
+
+    # Note di fallback se non specificate
+    if not notes:
+        notes = "Il presente preventivo è una stima economica basata sulle informazioni fornite. Eventuali variazioni sui materiali verranno concordate."
+
+    # Template HTML (Versione snella e pulita)
+    html_template = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <style>
+            @page {{ size: A4; margin: 20mm 15mm; }}
+            body {{ font-family: 'Arial', sans-serif; color: #2d3748; line-height: 1.4; font-size: 10pt; }}
+            .header {{ border-bottom: 3px solid #3182ce; padding-bottom: 15px; margin-bottom: 25px; }}
+            .title {{ font-size: 24pt; font-weight: bold; color: #2b6cb0; text-transform: uppercase; margin: 0; }}
+            .meta-table {{ width: 100%; margin-bottom: 25px; border-collapse: collapse; }}
+            .meta-table td {{ width: 50%; vertical-align: top; }}
+            .info-block h3 {{ font-size: 11pt; color: #2b6cb0; border-bottom: 1px solid #e2e8f0; padding-bottom: 3px; width: 90%; text-transform: uppercase; }}
+            .info-block p {{ margin: 3px 0; color: #4a5568; }}
+            .items-table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+            .items-table th {{ background-color: #2b6cb0; color: white; padding: 10px; text-align: left; text-transform: uppercase; font-size: 9pt; }}
+            .items-table td {{ padding: 12px 10px; border-bottom: 1px solid #e2e8f0; }}
+            .text-right {{ text-align: right; }}
+            .total-box {{ font-size: 13pt; font-weight: bold; color: #2b6cb0; border-top: 2px solid #2b6cb0; padding-top: 10px; }}
+            .notes {{ margin-top: 40px; background-color: #ebf8ff; border-left: 4px solid #3182ce; padding: 15px; }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1 class="title">Nikituttofare</h1>
+            <p style="margin: 5px 0 0 0; color: #4a5568; font-style: italic;">Riparazioni Domestiche in Riviera Romagnola</p>
+        </div>
+        <table class="meta-table">
+            <tr>
+                <td>
+                    <div class="info-block">
+                        <h3>Prestatore</h3>
+                        <p><strong>Nikita (Nikituttofare)</strong></p>
+                        <p>Rimini / Riccione / Bellaria</p>
+                    </div>
+                </td>
+                <td>
+                    <div class="info-block">
+                        <h3>Cliente</h3>
+                        <p><strong>{customer_name}</strong></p>
+                        <p>{address}, {city}</p>
+                    </div>
+                </td>
+            </tr>
+        </table>
+        <p><strong>Documento:</strong> {num_preventivo} | <strong>Data:</strong> {data_oggi}</p>
+        
+        <table class="items-table">
+            <thead>
+                <tr>
+                    <th>Descrizione Lavoro</th>
+                    <th style="text-align: right; width: 10%;">Q.tà</th>
+                    <th style="text-align: right; width: 20%;">Importo</th>
+                </tr>
+            </thead>
+            <tbody>
+                {table_rows}
+            </tbody>
+        </table>
+        
+        <table style="width: 100%; margin-top: 20px;">
+            <tr>
+                <td style="width: 60%;"></td>
+                <td style="width: 40%;" class="total-box">
+                    <span style="font-size: 10pt; color: #4a5568; font-weight: normal;">TOTALE STIMATO:</span><br>
+                    {totale_complessivo:,.2f} €
+                </td>
+            </tr>
+        </table>
+        <div class="notes">
+            <strong style="color: #2b6cb0; font-size: 9pt; text-transform: uppercase;">Note e Condizioni</strong>
+            <p style="margin: 5px 0 0 0; font-size: 9.5pt;">{notes}</p>
+        </div>
+    </body>
+    </html>
+    """
+    
+    # Output file path
+    clean_name = customer_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
+    filename = f"preventivo_{clean_name}.pdf"
+    output_path = f"/tmp/{filename}"
+    
+    try:
+        from weasyprint import HTML
+        HTML(string=html_template).write_pdf(output_path)
+        return output_path
+    except Exception as e:
+        return f"⚠️ Errore durante la compilazione del PDF: {str(e)}"
+

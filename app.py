@@ -7,7 +7,8 @@ from slack_bolt.adapter.fastapi import SlackRequestHandler
 from google import genai  # Google GenAI SDK
 from google.genai import types  # For Part/bytes operations
 from openai import OpenAI  # OpenAI client compatible with DeepSeek
-from tools import create_calendar_event, check_recent_emails, search_channel_history, check_vercel_status, check_github_commits, check_baserow_leads, check_supabase_logs, create_handyman_ticket, list_calendar_events, check_ga_analytics  # Helper tools
+from tools import create_calendar_event, check_recent_emails, search_channel_history, check_vercel_status, check_github_commits, check_baserow_leads, check_supabase_logs, create_handyman_ticket, list_calendar_events, check_ga_analytics, generate_handyman_quote  # Helper tools
+
 
 # Load environment variables from .env file
 load_dotenv()
@@ -134,9 +135,14 @@ CHANNELS = {
         "model": "gemini-3.1-flash-lite", 
         "system": (
             "Sei Jarvis (tom), l'assistente esecutivo e braccio destro operativo di Nikita per 'Nikituttofare'. "
-            "Il tuo compito principale è ascoltare i dettagli dei clienti (spesso dettati al volo da Nikita dal cantiere) "
-            "ed eseguire il tool `create_handyman_ticket` per registrarli nel database gestionale.\n\n"
-            "Regole di conversione Categoria (FONDAMENTALI):\n"
+            "I tuoi compiti principali sono:\n"
+            "1. Ascoltare i dettagli dei clienti (spesso dettati al volo da Nikita dal cantiere) ed eseguire il tool `create_handyman_ticket` per registrarli nel database gestionale.\n"
+            "2. Generare preventivi PDF professionali usando il tool `generate_handyman_quote` quando Nikita chiede di creare/generare un preventivo.\n\n"
+            "Regole per `generate_handyman_quote`:\n"
+            "- Identifica il nome del cliente (`customer_name`), la città (`city`), l'indirizzo (`address`), eventuali note (`notes`) e le singole voci del preventivo.\n"
+            "- Il parametro `items_json` DEVE essere una stringa JSON valida che rappresenta un array di oggetti con campi `description` (es. 'Sostituzione galleggiante Geberit'), `details` (es. 'compreso montaggio e taratura', opzionale/stringa vuota se assente), e `price` (es. 95.0, come numero float). Esempio: `[{\"description\": \"Galleggiante\", \"details\": \"\", \"price\": 95.0}, {\"description\": \"Manodopera\", \"details\": \"\", \"price\": 55.0}]`.\n"
+            "- Se Nikita ti dà i prezzi in euro, estrai solo il valore numerico per il campo `price`.\n\n"
+            "Regole di conversione Categoria (FONDAMENTALI per ticket):\n"
             "- Perdite d'acqua, bidet, scarichi, rubinetti, tubi ➔ 'plumbing'\n"
             "- Cortocircuiti, prese, quadri elettrici, luci, impianti ➔ 'electric'\n"
             "- Porte bloccate, chiavi, serrature, cilindri, infissi ➔ 'locksmith'\n"
@@ -648,7 +654,8 @@ AVAILABLE_TOOLS = {
     "list_calendar_events": list_calendar_events,
     "check_vercel_status": check_vercel_status,
     "check_github_commits": check_github_commits,
-    "check_ga_analytics": check_ga_analytics
+    "check_ga_analytics": check_ga_analytics,
+    "generate_handyman_quote": generate_handyman_quote
 }
 
 # Capture any text message sent to channels where the bot is a member
@@ -729,6 +736,7 @@ def handle_message_events(body, say, client):
                 tools_list.append(search_channel_history)
                 tools_list.append(create_handyman_ticket)
                 tools_list.append(list_calendar_events)
+                tools_list.append(generate_handyman_quote)
             if config["agente"] == "jarvis":
                 tools_list.append(check_recent_emails)
                 tools_list.append(check_vercel_status)
@@ -823,6 +831,26 @@ def handle_message_events(body, say, client):
                                 project=args_dict.get("project", "ZIREL"),
                                 days=args_dict.get("days", 7)
                             )
+                        elif tool_name == "generate_handyman_quote":
+                            res = generate_handyman_quote(
+                                customer_name=args_dict.get("customer_name"),
+                                city=args_dict.get("city"),
+                                address=args_dict.get("address"),
+                                items_json=args_dict.get("items_json"),
+                                notes=args_dict.get("notes")
+                            )
+                            # If result is a file path, upload to Slack
+                            if res and res.startswith("/tmp/") and res.endswith(".pdf"):
+                                try:
+                                    client.files_upload_v2(
+                                        channel=channel_id,
+                                        file=res,
+                                        filename=os.path.basename(res),
+                                        initial_comment="📄 Ecco il tuo preventivo!"
+                                    )
+                                    res = "✅ Preventivo PDF generato e caricato nel canale!"
+                                except Exception as upload_err:
+                                    res = f"⚠️ PDF generato ma upload fallito: {upload_err}"
                         else:
                             res = f"Tool {tool_name} executed."
                             

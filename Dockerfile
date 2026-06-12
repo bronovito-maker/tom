@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
     libopenjp2-7-dev \
     shared-mime-info \
     libcairo2 \
-    libgdk-pixbuf2.0-0 \
+    libgdk-pixbuf-2.0-0 \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 

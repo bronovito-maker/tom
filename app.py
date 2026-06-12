@@ -7,7 +7,7 @@ from slack_bolt.adapter.fastapi import SlackRequestHandler
 from google import genai  # Google GenAI SDK
 from google.genai import types  # For Part/bytes operations
 from openai import OpenAI  # OpenAI client compatible with DeepSeek
-from tools import create_calendar_event, check_recent_emails  # Helper tools
+from tools import create_calendar_event, check_recent_emails, search_channel_history  # Helper tools
 
 # Load environment variables from .env file
 load_dotenv()
@@ -132,13 +132,13 @@ CHANNELS = {
         "agente": "handyman",
         "provider": "gemini",
         "model": "gemini-3.1-flash-lite",
-        "system": "Sei l'assistente tecnico handyman di Nikita. Lo aiuti a strutturare preventivi e riparazioni locali. Hai a disposizione lo strumento chiamato create_calendar_event per fissare sopralluoghi o appuntamenti. Quando Nikita ti chiede di fissare o spostare un appuntamento, usa questo tool estraendo i dati. Anno corrente: 2026. Oggi è Venerdì 12 Giugno 2026. Assumi il 2026 se non specificato. Formato ISO 8601 (YYYY-MM-DDTHH:MM:SS)."
+        "system": "Sei l'assistente tecnico handyman di Nikita. Lo aiuti a strutturare preventivi e riparazioni locali. Hai a disposizione lo strumento chiamato create_calendar_event per fissare sopralluoghi o appuntamenti, e search_channel_history per cercare messaggi passati nel canale. Quando Nikita ti chiede di fissare o spostare un appuntamento o di cercare discussioni passate, usa il tool corrispondente estraendo i dati. Anno corrente: 2026. Oggi è Venerdì 12 Giugno 2026. Assumi il 2026 se non specificato. Formato ISO 8601 (YYYY-MM-DDTHH:MM:SS)."
     },
     "C0BA1NX5Q03": {
         "agente": "jarvis",
         "provider": "gemini",
         "model": "gemini-3.1-flash-lite",
-        "system": "Sei Jarvis (tom), l'assistente personale esecutivo di Nikita. Il tuo compito è aiutarlo a gestire la sua agenda, i suoi progetti e le sue comunicazioni. Hai a disposizione lo strumento (Tool) chiamato create_calendar_event per gli appuntamenti, e lo strumento check_recent_emails per controllare le email.\n\nQUANDO l'utente ti chiede di fissare o spostare un appuntamento, una call o un sopralluogo, NON rispondere con testo normale ma invoca create_calendar_event.\nQUANDO l'utente ti chiede se ci sono novità via email o di controllare le ultime email, NON rispondere con testo normale ma invoca check_recent_emails con il numero desiderato di email (default 5).\n\nRegole temporali (Contesto Corrente):\n- L'anno corrente è il 2026.\n- Oggi è Venerdì 12 Giugno 2026.\n- Se l'utente dice 'lunedì prossimo', calcola la data corretta (Lunedì 15 Giugno 2026).\n- Se l'utente non specifica l'anno, assumi sia il 2026.\n- Restituisci sempre le date e gli orari nel formato ISO 8601 standard (YYYY-MM-DDTHH:MM:SS).\n\nSe le informazioni fornite sono incomplete, chiedi chiarimenti in modo conciso prima di invocare il tool."
+        "system": "Sei Jarvis (tom), l'assistente personale esecutivo di Nikita. Il tuo compito è aiutarlo a gestire la sua agenda, i suoi progetti e le sue comunicazioni. Hai a disposizione lo strumento (Tool) chiamato create_calendar_event per gli appuntamenti, check_recent_emails per controllare le email, e search_channel_history per scansionare e cercare nella cronologia dei messaggi del canale corrente.\n\nQUANDO l'utente ti chiede di fissare o spostare un appuntamento, una call o un sopralluogo, NON rispondere con testo normale ma invoca create_calendar_event.\nQUANDO l'utente ti chiede se ci sono novità via email o di controllare le ultime email, NON rispondere con testo normale ma invoca check_recent_emails con il numero desiderato di email (default 5).\nQUANDO l'utente ti chiede di cercare o fare ricerche su messaggi, decisioni o discussioni passate nel canale corrente, NON rispondere con testo normale ma invoca search_channel_history.\n\nRegole temporali (Contesto Corrente):\n- L'anno corrente è il 2026.\n- Oggi è Venerdì 12 Giugno 2026.\n- Se l'utente dice 'lunedì prossimo', calcola la data corretta (Lunedì 15 Giugno 2026).\n- Se l'utente non specifica l'anno, assumi sia il 2026.\n- Restituisci sempre le date e gli orari nel formato ISO 8601 standard (YYYY-MM-DDTHH:MM:SS).\n\nSe le informazioni fornite sono incomplete, chiedi chiarimenti in modo conciso prima di invocare il tool."
     },
     "C0BABSUS9DJ": {
         "agente": "eni",
@@ -619,7 +619,8 @@ async def slack_events(request: Request):
 
 AVAILABLE_TOOLS = {
     "check_recent_emails": check_recent_emails,
-    "create_calendar_event": create_calendar_event
+    "create_calendar_event": create_calendar_event,
+    "search_channel_history": search_channel_history
 }
 
 # Capture any text message sent to channels where the bot is a member
@@ -693,10 +694,11 @@ def handle_message_events(body, say, client):
             if not gemini_contents:
                 gemini_contents.append(types.Content(role="user", parts=[types.Part.from_text(text="Analizza la richiesta")]))
 
-            # Identify if we should provide calendar and email tools
+            # Identify if we should provide calendar, search history and email tools
             tools_list = []
             if config["agente"] in ("jarvis", "handyman"):
                 tools_list.append(create_calendar_event)
+                tools_list.append(search_channel_history)
             if config["agente"] == "jarvis":
                 tools_list.append(check_recent_emails)
 
@@ -721,6 +723,10 @@ def handle_message_events(body, say, client):
                     # Convert args if object/struct
                     args_dict = dict(tool_args) if hasattr(tool_args, "__dict__") else tool_args
                     
+                    # Inject channel_id context for historical search
+                    if tool_name == "search_channel_history":
+                        args_dict["channel_id"] = channel_id
+                    
                     if tool_name in AVAILABLE_TOOLS:
                         print(f"⚙️ Tom is executing tool: {tool_name} with arguments {args_dict}")
                         
@@ -733,6 +739,12 @@ def handle_message_events(body, say, client):
                             )
                         elif tool_name == "check_recent_emails":
                             res = check_recent_emails(count=args_dict.get("count", 5))
+                        elif tool_name == "search_channel_history":
+                            res = search_channel_history(
+                                query=args_dict.get("query"),
+                                channel_id=args_dict.get("channel_id"),
+                                limit=args_dict.get("limit", 100)
+                            )
                         else:
                             res = f"Tool {tool_name} executed."
                             

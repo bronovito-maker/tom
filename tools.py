@@ -125,3 +125,58 @@ def check_recent_emails(count: int = 5) -> str:
     except Exception as e:
         return f"⚠️ Errore durante la lettura della casella postale: {str(e)}"
 
+
+from datetime import datetime
+from slack_sdk import WebClient
+
+def search_channel_history(query: str, channel_id: str, limit: int = 100) -> str:
+    """
+    Scansiona la cronologia profonda del canale Slack corrente (fino a 'limit' messaggi) 
+    per cercare informazioni, decisioni o dati passati che contengono una specifica parola chiave.
+    
+    Args:
+        query: La parola chiave o frase da cercare nella cronologia (es. "Marcello", "preventivo", "bug").
+        channel_id: L'ID del canale corrente in cui effettuare la ricerca (fornito automaticamente).
+        limit: Il numero di messaggi passati da scansionare (default 100).
+    """
+    # Inizializziamo il client Slack interno al tool usando lo stesso token del server
+    slack_client = WebClient(token=os.environ.get("SLACK_BOT_TOKEN"))
+    
+    try:
+        print(f"🔍 Ricerca storica avviata nel canale {channel_id} per la query: '{query}'")
+        
+        # Recuperiamo la cronologia estesa
+        response = slack_client.conversations_history(channel=channel_id, limit=limit)
+        messages = response.get("messages", [])
+        
+        if not messages:
+            return "Non ho trovato nessun messaggio nella cronologia di questo canale."
+            
+        risultati = []
+        query_lower = query.lower()
+        
+        # Analizziamo i messaggi dal più vecchio al più recente
+        for msg in reversed(messages):
+            text = msg.get("text", "")
+            
+            # Filtriamo per la query inserita dall'utente
+            if query_lower in text.lower():
+                # Convertiamo il timestamp di Slack (es. 1718221790.0002) in una data leggibile
+                ts = float(msg.get("ts", 0))
+                data_ora = datetime.fromtimestamp(ts).strftime('%d/%m/%Y %H:%M:%S')
+                
+                autore = "Tom (Tu)" if "bot_id" in msg else f"Utente ({msg.get('user', 'Sconosciuto')})"
+                
+                risultati.append(f"📅 [{data_ora}] {autore}: {text}")
+        
+        if not risultati:
+            return f"Ho scansionato gli ultimi {limit} messaggi ma non ho trovato nessuna corrispondenza per '{query}'."
+            
+        # Uniamo i risultati in un unico blocco di testo che Gemini analizzerà
+        output = f"Ho trovato {len(risultati)} messaggi rilevanti nella cronologia recente per '{query}':\n\n"
+        output += "\n\n".join(risultati)
+        return output
+        
+    except Exception as e:
+        return f"⚠️ Errore durante la scansione della cronologia di Slack: {str(e)}"
+

@@ -7,7 +7,7 @@ from slack_bolt.adapter.fastapi import SlackRequestHandler
 from google import genai  # Google GenAI SDK
 from google.genai import types  # For Part/bytes operations
 from openai import OpenAI  # OpenAI client compatible with DeepSeek
-from tools import create_calendar_event  # Google Calendar tools
+from tools import create_calendar_event, check_recent_emails  # Helper tools
 
 # Load environment variables from .env file
 load_dotenv()
@@ -138,7 +138,7 @@ CHANNELS = {
         "agente": "jarvis",
         "provider": "gemini",
         "model": "gemini-3.1-flash-lite",
-        "system": "Sei Jarvis (tom), l'assistente personale esecutivo di Nikita. Il tuo compito è aiutarlo a gestire la sua agenda e i suoi progetti. Hai a disposizione lo strumento (Tool) chiamato create_calendar_event. QUANDO l'utente ti chiede di fissare, programmare, segnare o spostare un appuntamento, una call o un sopralluogo, NON devi rispondere con del testo normale. Devi invece invocare la funzione create_calendar_event estraendo i dati corretti dal testo dell'utente.\n\nRegole temporali fondamentali (Contesto Corrente):\n- L'anno corrente è il 2026.\n- Oggi è Venerdì 12 Giugno 2026.\n- Se l'utente dice 'lunedì prossimo', calcola la data corretta (Lunedì 15 Giugno 2026).\n- Se l'utente non specifica l'anno, assumi sia il 2026.\n- Restituisci sempre le date e gli orari nel formato ISO 8601 standard (YYYY-MM-DDTHH:MM:SS).\n\nSe le informazioni fornite dall'utente sono incomplete (ad esempio manca l'ora), chiedi chiarimenti in modo conciso prima di invocare il tool."
+        "system": "Sei Jarvis (tom), l'assistente personale esecutivo di Nikita. Il tuo compito è aiutarlo a gestire la sua agenda, i suoi progetti e le sue comunicazioni. Hai a disposizione lo strumento (Tool) chiamato create_calendar_event per gli appuntamenti, e lo strumento check_recent_emails per controllare le email.\n\nQUANDO l'utente ti chiede di fissare o spostare un appuntamento, una call o un sopralluogo, NON rispondere con testo normale ma invoca create_calendar_event.\nQUANDO l'utente ti chiede se ci sono novità via email o di controllare le ultime email, NON rispondere con testo normale ma invoca check_recent_emails con il numero desiderato di email (default 5).\n\nRegole temporali (Contesto Corrente):\n- L'anno corrente è il 2026.\n- Oggi è Venerdì 12 Giugno 2026.\n- Se l'utente dice 'lunedì prossimo', calcola la data corretta (Lunedì 15 Giugno 2026).\n- Se l'utente non specifica l'anno, assumi sia il 2026.\n- Restituisci sempre le date e gli orari nel formato ISO 8601 standard (YYYY-MM-DDTHH:MM:SS).\n\nSe le informazioni fornite sono incomplete, chiedi chiarimenti in modo conciso prima di invocare il tool."
     },
     "C0BABSUS9DJ": {
         "agente": "eni",
@@ -666,10 +666,12 @@ def handle_message_events(body, say):
             else:
                 gemini_contents.append("Analizza l'allegato fornito.")
 
-            # Identify if we should provide calendar tools
+            # Identify if we should provide calendar and email tools
             tools_list = []
             if config["agente"] in ("jarvis", "handyman"):
-                tools_list = [create_calendar_event]
+                tools_list.append(create_calendar_event)
+            if config["agente"] == "jarvis":
+                tools_list.append(check_recent_emails)
 
             # Call Google Gemini using robust helper with fallback
             gemini_response = call_gemini(
@@ -703,6 +705,13 @@ def handle_message_events(body, say):
                             risposta_ai += f"Fatto Nikita! Ho inserito l'appuntamento '{res.get('summary')}' per il {res.get('start')}.\nLink all'evento: {res.get('event_link')}\n"
                         else:
                             risposta_ai += f"⚠️ Si è verificato un errore nel creare l'appuntamento: {res.get('message')}\n"
+                    elif call.name == "check_recent_emails":
+                        args = call.args
+                        args_dict = dict(args) if hasattr(args, "__dict__") else args
+                        count = args_dict.get("count", 5)
+                        print(f"🔹 Executing email tool: check_recent_emails with count={count}")
+                        res = check_recent_emails(count=count)
+                        risposta_ai += res
             else:
                 risposta_ai = gemini_response.text
 

@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 .DS_Store
 .vscode/
+gen-lang-client-*.json
+*.json

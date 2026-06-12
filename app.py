@@ -7,6 +7,7 @@ from slack_bolt.adapter.fastapi import SlackRequestHandler
 from google import genai  # Google GenAI SDK
 from google.genai import types  # For Part/bytes operations
 from openai import OpenAI  # OpenAI client compatible with DeepSeek
+from tools import create_calendar_event  # Google Calendar tools
 
 # Load environment variables from .env file
 load_dotenv()
@@ -38,34 +39,38 @@ def download_slack_file(url):
     else:
         raise Exception(f"Failed to download file: HTTP {response.status_code}")
 
-# Helper to call Gemini with a robust fallback chain
-def call_gemini(model_name, contents, system_instruction):
+# Helper to call Gemini with a robust fallback chain and tools support
+def call_gemini(model_name, contents, system_instruction, tools=None):
+    config_dict = {"system_instruction": system_instruction}
+    if tools:
+        config_dict["tools"] = tools
+
     # Prova il modello principale richiesto (es. gemini-3.1-flash-lite)
     try:
         response = gemini_client.models.generate_content(
             model=model_name,
             contents=contents,
-            config={"system_instruction": system_instruction}
+            config=config_dict
         )
-        return response.text
+        return response
     except Exception as e:
         print(f"⚠️ Model {model_name} failed. Attempting fallback 1 (gemini-2.5-flash-lite)... Error: {e}")
         try:
             response = gemini_client.models.generate_content(
                 model="gemini-2.5-flash-lite",
                 contents=contents,
-                config={"system_instruction": system_instruction}
+                config=config_dict
             )
-            return response.text
+            return response
         except Exception as e2:
             fallback_pro = "gemini-2.5-pro"
             print(f"⚠️ Fallback 1 failed. Attempting fallback 2 ({fallback_pro})... Error: {e2}")
             response = gemini_client.models.generate_content(
                 model=fallback_pro,
                 contents=contents,
-                config={"system_instruction": system_instruction}
+                config=config_dict
             )
-            return response.text
+            return response
 
 # Helper to describe image with Gemini using a robust fallback chain
 def describe_image_with_gemini(file_bytes, mimetype):
@@ -127,13 +132,13 @@ CHANNELS = {
         "agente": "handyman",
         "provider": "gemini",
         "model": "gemini-3.1-flash-lite",
-        "system": "Sei l'assistente tecnico handyman di Nikita. Aiutalo a strutturare preventivi di riparazione, idraulica ed elettrica per i clienti locali."
+        "system": "Sei l'assistente tecnico handyman di Nikita. Lo aiuti a strutturare preventivi e riparazioni locali. Hai a disposizione lo strumento chiamato create_calendar_event per fissare sopralluoghi o appuntamenti. Quando Nikita ti chiede di fissare o spostare un appuntamento, usa questo tool estraendo i dati. Anno corrente: 2026. Oggi è Venerdì 12 Giugno 2026. Assumi il 2026 se non specificato. Formato ISO 8601 (YYYY-MM-DDTHH:MM:SS)."
     },
     "C0BA1NX5Q03": {
         "agente": "jarvis",
         "provider": "gemini",
         "model": "gemini-3.1-flash-lite",
-        "system": "Sei Jarvis (tom), l'assistente personale esecutivo e segretario di Nikita. Sei brillante, conciso e pronto a rispondere a qualsiasi richiesta."
+        "system": "Sei Jarvis (tom), l'assistente personale esecutivo di Nikita. Il tuo compito è aiutarlo a gestire la sua agenda e i suoi progetti. Hai a disposizione lo strumento (Tool) chiamato create_calendar_event. QUANDO l'utente ti chiede di fissare, programmare, segnare o spostare un appuntamento, una call o un sopralluogo, NON devi rispondere con del testo normale. Devi invece invocare la funzione create_calendar_event estraendo i dati corretti dal testo dell'utente.\n\nRegole temporali fondamentali (Contesto Corrente):\n- L'anno corrente è il 2026.\n- Oggi è Venerdì 12 Giugno 2026.\n- Se l'utente dice 'lunedì prossimo', calcola la data corretta (Lunedì 15 Giugno 2026).\n- Se l'utente non specifica l'anno, assumi sia il 2026.\n- Restituisci sempre le date e gli orari nel formato ISO 8601 standard (YYYY-MM-DDTHH:MM:SS).\n\nSe le informazioni fornite dall'utente sono incomplete (ad esempio manca l'ora), chiedi chiarimenti in modo conciso prima di invocare il tool."
     },
     "C0BABSUS9DJ": {
         "agente": "eni",
@@ -661,12 +666,45 @@ def handle_message_events(body, say):
             else:
                 gemini_contents.append("Analizza l'allegato fornito.")
 
+            # Identify if we should provide calendar tools
+            tools_list = []
+            if config["agente"] in ("jarvis", "handyman"):
+                tools_list = [create_calendar_event]
+
             # Call Google Gemini using robust helper with fallback
-            risposta_ai = call_gemini(
+            gemini_response = call_gemini(
                 model_name=config["model"],
                 contents=gemini_contents,
-                system_instruction=config["system"]
+                system_instruction=config["system"],
+                tools=tools_list
             )
+
+            # Check if Gemini triggered a function call
+            if gemini_response.function_calls:
+                risposta_ai = ""
+                for call in gemini_response.function_calls:
+                    if call.name == "create_calendar_event":
+                        args = call.args
+                        # Convert args if object/struct
+                        args_dict = dict(args) if hasattr(args, "__dict__") else args
+                        summary = args_dict.get("summary")
+                        start_time = args_dict.get("start_time")
+                        end_time = args_dict.get("end_time")
+                        description = args_dict.get("description", "")
+                        
+                        print(f"🔹 Executing calendar tool: {summary} ({start_time} to {end_time})")
+                        res = create_calendar_event(
+                            summary=summary,
+                            start_time=start_time,
+                            end_time=end_time,
+                            description=description
+                        )
+                        if res.get("status") == "success":
+                            risposta_ai += f"Fatto Nikita! Ho inserito l'appuntamento '{res.get('summary')}' per il {res.get('start')}.\nLink all'evento: {res.get('event_link')}\n"
+                        else:
+                            risposta_ai += f"⚠️ Si è verificato un errore nel creare l'appuntamento: {res.get('message')}\n"
+            else:
+                risposta_ai = gemini_response.text
 
         elif config["provider"] == "deepseek":
             # DeepSeek does not natively support multimodal image input.

@@ -633,6 +633,45 @@ DEFAULT_CONFIG = {
 # Initialize FastAPI App
 api = FastAPI()
 
+@api.on_event("startup")
+async def startup_event():
+    import os
+    import glob
+    print("=== STARTUP DIAGNOSTICS ===")
+    print("LD_LIBRARY_PATH:", os.environ.get("LD_LIBRARY_PATH"))
+    print("PATH:", os.environ.get("PATH"))
+    print("Current Dir:", os.getcwd())
+    
+    search_paths = [
+        "/app/.nix-profile/lib",
+        "/root/.nix-profile/lib",
+        "/etc/profiles/per-user/*/lib",
+        "/nix/var/nix/profiles/default/lib"
+    ]
+    for sp in search_paths:
+        expanded = glob.glob(sp)
+        for p in expanded:
+            if os.path.exists(p):
+                print(f"Path exists: {p}")
+                libs = glob.glob(os.path.join(p, "*gobject*"))
+                if libs:
+                    print(f"  Found gobject libs in {p}: {libs}")
+                else:
+                    print(f"  No gobject libs in {p}")
+                    
+    # Also check standard locations
+    std_gobjects = []
+    for root_path in ["/usr/lib", "/lib", "/usr/local/lib"]:
+        for root_dir, dirs, files in os.walk(root_path):
+            for f in files:
+                if "libgobject" in f:
+                    std_gobjects.append(os.path.join(root_dir, f))
+    if std_gobjects:
+        print("Found gobject in std paths:", std_gobjects)
+    else:
+        print("No gobject found in standard paths.")
+    print("=========================")
+
 # Root endpoint for Railway HTTP Healthcheck
 @api.get("/")
 async def root():

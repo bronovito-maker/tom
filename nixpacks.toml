@@ -1,14 +1,14 @@
 [phases.setup]
 aptPkgs = [
     "libpango-1.0-0",
+    "libharfbuzz0b",
     "libpangoft2-1.0-0",
-    "libpangocairo-1.0-0",
+    "libharfbuzz-subset0",
+    "libffi-dev",
+    "libjpeg-dev",
+    "libopenjp2-7-dev",
+    "shared-mime-info",
     "libcairo2",
     "libgdk-pixbuf2.0-0",
-    "libffi-dev",
-    "shared-mime-info",
-    "libglib2.0-0",
-    "libharfbuzz-gobject0",
-    "libgirepository-1.0-1",
-    "gobject-introspection"
+    "libglib2.0-0"
 ]

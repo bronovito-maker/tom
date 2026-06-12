@@ -770,5 +770,8 @@ def generate_handyman_quote(
         HTML(string=html_template).write_pdf(output_path)
         return output_path
     except Exception as e:
-        return f"⚠️ Errore durante la compilazione del PDF: {str(e)}"
+        import traceback
+        tb = traceback.format_exc()
+        print(f"❌ WEASYPRINT ERROR:\n{tb}")
+        return f"⚠️ Errore durante la compilazione del PDF: {str(e)}\n\nTraceback:\n{tb}"
 

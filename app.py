@@ -38,8 +38,9 @@ def download_slack_file(url):
     else:
         raise Exception(f"Failed to download file: HTTP {response.status_code}")
 
-# Helper to call Gemini with a stable fallback in case of high demand
+# Helper to call Gemini with a robust fallback chain
 def call_gemini(model_name, contents, system_instruction):
+    # Prova il modello principale richiesto (es. gemini-3.1-flash-lite)
     try:
         response = gemini_client.models.generate_content(
             model=model_name,
@@ -48,19 +49,25 @@ def call_gemini(model_name, contents, system_instruction):
         )
         return response.text
     except Exception as e:
-        if "503" in str(e) or "UNAVAILABLE" in str(e) or "high demand" in str(e).lower():
-            fallback_model = "gemini-2.0-flash"
-            print(f"⚠️ Model {model_name} unavailable. Falling back to {fallback_model}. Error: {e}")
+        print(f"⚠️ Model {model_name} failed. Attempting fallback 1 (gemini-2.5-flash-lite)... Error: {e}")
+        try:
             response = gemini_client.models.generate_content(
-                model=fallback_model,
+                model="gemini-2.5-flash-lite",
                 contents=contents,
                 config={"system_instruction": system_instruction}
             )
             return response.text
-        else:
-            raise e
+        except Exception as e2:
+            fallback_pro = "gemini-2.5-pro"
+            print(f"⚠️ Fallback 1 failed. Attempting fallback 2 ({fallback_pro})... Error: {e2}")
+            response = gemini_client.models.generate_content(
+                model=fallback_pro,
+                contents=contents,
+                config={"system_instruction": system_instruction}
+            )
+            return response.text
 
-# Helper to describe image with Gemini using a stable fallback
+# Helper to describe image with Gemini using a robust fallback chain
 def describe_image_with_gemini(file_bytes, mimetype):
     contents = [
         types.Part.from_bytes(data=file_bytes, mime_type=mimetype),
@@ -68,18 +75,26 @@ def describe_image_with_gemini(file_bytes, mimetype):
     ]
     try:
         response = gemini_client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.1-flash-lite",
             contents=contents
         )
         return response.text
     except Exception as e:
-        fallback_model = "gemini-2.0-flash"
-        print(f"⚠️ Failed to describe image with gemini-2.5-flash: {e}. Falling back to {fallback_model}.")
-        response = gemini_client.models.generate_content(
-            model=fallback_model,
-            contents=contents
-        )
-        return response.text
+        print(f"⚠️ Describe image with gemini-3.1-flash-lite failed. Trying gemini-2.5-flash-lite... Error: {e}")
+        try:
+            response = gemini_client.models.generate_content(
+                model="gemini-2.5-flash-lite",
+                contents=contents
+            )
+            return response.text
+        except Exception as e2:
+            fallback_pro = "gemini-2.5-pro"
+            print(f"⚠️ Fallback to gemini-2.5-flash-lite failed. Trying {fallback_pro}... Error: {e2}")
+            response = gemini_client.models.generate_content(
+                model=fallback_pro,
+                contents=contents
+            )
+            return response.text
 
 # 3. Channel Mapping Configuration
 # Sostituisci gli ID segnaposto (es. 'C_ID_DEV') con gli ID reali dei tuoi canali Slack
@@ -99,28 +114,29 @@ CHANNELS = {
     "C0BA1NT1KEX": {
         "agente": "copy",
         "provider": "gemini",
-        "model": "gemini-2.5-flash",
+        "model": "gemini-3.1-flash-lite",
         "system": "Sei il copywriter creativo di Nikita. Scrivi testi persuasivi, email commerciali e post per i clienti con un tono professionale ma accattivante."
     },
-    "C_ID_ADV": {
+    "C0B9SKR7E87": {
         "agente": "adv",
         "provider": "gemini",
-        "model": "gemini-2.5-flash",
+        "model": "gemini-3.1-flash-lite",
         "system": "Sei l'esperto di digital marketing e Google Ads di Nikita. Analizzi le performance delle campagne e proponi ottimizzazioni basate sui dati."
     },
     "C_ID_HANDYMAN": {
         "agente": "handyman",
         "provider": "gemini",
-        "model": "gemini-2.5-flash",
+        "model": "gemini-3.1-flash-lite",
         "system": "Sei l'assistente tecnico handyman di Nikita. Aiutalo a strutturare preventivi di riparazione, idraulica ed elettrica per i clienti locali."
     }
 }
 
 DEFAULT_CONFIG = {
     "provider": "gemini",
-    "model": "gemini-2.5-flash",
+    "model": "gemini-3.1-flash-lite",
     "system": "Sei Jarvis (tom), l'assistente personale esecutivo e segretario di Nikita. Sei brillante, conciso e pronto a rispondere a qualsiasi richiesta."
 }
+
 
 
 # Initialize FastAPI App

@@ -1,4 +1,5 @@
 import os
+import requests
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
@@ -179,4 +180,93 @@ def search_channel_history(query: str, channel_id: str, limit: int = 100) -> str
         
     except Exception as e:
         return f"⚠️ Errore durante la scansione della cronologia di Slack: {str(e)}"
+
+
+def check_vercel_status(limit: int = 3) -> str:
+    """
+    Recupera lo stato degli ultimi deploy su Vercel per monitorare se i siti online sono attivi o se ci sono errori di build.
+    """
+    token = os.environ.get("VERCEL_TOKEN")
+    if not token:
+        return "⚠️ Errore: VERCEL_TOKEN non configurato su Railway."
+        
+    headers = {"Authorization": f"Bearer {token}"}
+    url = f"https://api.vercel.com/v6/deployments?limit={limit}"
+    
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            return f"Impossibile connettersi a Vercel. Status: {response.status_code}"
+            
+        data = response.json()
+        deployments = data.get("deployments", [])
+        
+        if not deployments:
+            return "Nessun deploy trovato su Vercel."
+            
+        output = f"🌐 *Stato Ultimi Deploy Vercel:*\n\n"
+        for dep in deployments:
+            name = dep.get("name")
+            url_sito = dep.get("url")
+            state = dep.get("state")
+            creator = dep.get("creator", {}).get("username", "Unknown")
+            
+            status_emoji = "🟢 READY" if state == "READY" else "🔴 ERROR" if state == "ERROR" else "🟡 " + state
+            
+            output += f"📁 *Progetto:* {name}\n"
+            output += f"📊 *Stato:* {status_emoji}\n"
+            output += f"🔗 *Link:* https://{url_sito}\n"
+            output += f"👤 *Autore:* {creator}\n"
+            output += "─" * 20 + "\n"
+            
+        return output
+        
+    except Exception as e:
+        return f"⚠️ Errore durante la lettura delle API di Vercel: {str(e)}"
+
+
+def check_github_commits(repo_owner: str, repo_name: str, limit: int = 3) -> str:
+    """
+    Controlla gli ultimi commit di un determinato repository GitHub per verificare le ultime modifiche al codice.
+    
+    Args:
+        repo_owner: Il proprietario del repository (es. 'bronovito-maker').
+        repo_name: Il nome del repository (es. 'tom').
+        limit: Numero di commit da mostrare.
+    """
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        return "⚠️ Errore: GITHUB_TOKEN non configurato su Railway."
+        
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/commits?per_page={limit}"
+    
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            return f"Impossibile leggere il repo {repo_name}. Status: {response.status_code}"
+            
+        commits = response.json()
+        if not commits or not isinstance(commits, list):
+            return f"Nessun commit trovato per il repo {repo_name}."
+            
+        output = f"🐙 *Ultimi modifiche su GitHub ({repo_name}):*\n\n"
+        for commit_data in commits:
+            commit_info = commit_data.get("commit", {})
+            author = commit_info.get("author", {}).get("name")
+            message = commit_info.get("message")
+            date = commit_info.get("author", {}).get("date")
+            
+            output += f"👤 *Developer:* {author}\n"
+            output += f"📝 *Messaggio:* {message.strip()}\n"
+            output += f"📅 *Data:* {date}\n"
+            output += "─" * 20 + "\n"
+            
+        return output
+        
+    except Exception as e:
+        return f"⚠️ Errore durante la lettura delle API di GitHub: {str(e)}"
 

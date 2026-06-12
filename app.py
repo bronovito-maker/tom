@@ -7,7 +7,7 @@ from slack_bolt.adapter.fastapi import SlackRequestHandler
 from google import genai  # Google GenAI SDK
 from google.genai import types  # For Part/bytes operations
 from openai import OpenAI  # OpenAI client compatible with DeepSeek
-from tools import create_calendar_event, check_recent_emails, search_channel_history  # Helper tools
+from tools import create_calendar_event, check_recent_emails, search_channel_history, check_vercel_status, check_github_commits  # Helper tools
 
 # Load environment variables from .env file
 load_dotenv()
@@ -138,7 +138,7 @@ CHANNELS = {
         "agente": "jarvis",
         "provider": "gemini",
         "model": "gemini-3.1-flash-lite",
-        "system": "Sei Jarvis (tom), l'assistente personale esecutivo di Nikita. Il tuo compito è aiutarlo a gestire la sua agenda, i suoi progetti e le sue comunicazioni. Hai a disposizione lo strumento (Tool) chiamato create_calendar_event per gli appuntamenti, check_recent_emails per controllare le email, e search_channel_history per scansionare e cercare nella cronologia dei messaggi del canale corrente.\n\nQUANDO l'utente ti chiede di fissare o spostare un appuntamento, una call o un sopralluogo, NON rispondere con testo normale ma invoca create_calendar_event.\nQUANDO l'utente ti chiede se ci sono novità via email o di controllare le ultime email, NON rispondere con testo normale ma invoca check_recent_emails con il numero desiderato di email (default 5).\nQUANDO l'utente ti chiede di cercare o fare ricerche su messaggi, decisioni o discussioni passate nel canale corrente, NON rispondere con testo normale ma invoca search_channel_history.\n\nRegole temporali (Contesto Corrente):\n- L'anno corrente è il 2026.\n- Oggi è Venerdì 12 Giugno 2026.\n- Se l'utente dice 'lunedì prossimo', calcola la data corretta (Lunedì 15 Giugno 2026).\n- Se l'utente non specifica l'anno, assumi sia il 2026.\n- Restituisci sempre le date e gli orari nel formato ISO 8601 standard (YYYY-MM-DDTHH:MM:SS).\n\nSe le informazioni fornite sono incomplete, chiedi chiarimenti in modo conciso prima di invocare il tool."
+        "system": "Sei Jarvis (tom), l'assistente personale esecutivo di Nikita. Il tuo compito è aiutarlo a gestire la sua agenda, i suoi progetti e le sue comunicazioni. Hai a disposizione questi strumenti (Tool):\n1. create_calendar_event per creare appuntamenti nel calendario.\n2. check_recent_emails per leggere le email recenti.\n3. search_channel_history per cercare nella cronologia dei messaggi del canale.\n4. check_vercel_status per controllare lo stato dell'ultimo deploy su Vercel.\n5. check_github_commits per controllare gli ultimi commit su GitHub.\n\nQUANDO l'utente ti chiede di fissare o spostare un appuntamento, una call o un sopralluogo, invoca create_calendar_event.\nQUANDO l'utente ti chiede se ci sono novità via email o di controllare le ultime email, invoca check_recent_emails.\nQUANDO l'utente ti chiede di cercare o fare ricerche su messaggi, decisioni o discussioni passate, invoca search_channel_history.\nQUANDO l'utente ti chiede informazioni sullo stato dei deploy, del sito o di Vercel, invoca check_vercel_status.\nQUANDO l'utente ti chiede degli ultimi commit o modifiche su GitHub, invoca check_github_commits. Se l'utente non specifica il repository, assumi che repo_owner sia 'bronovito-maker' e repo_name sia 'tom' come valori di default.\n\nRegole temporali (Contesto Corrente):\n- L'anno corrente è il 2026.\n- Oggi è Venerdì 12 Giugno 2026.\n- Se l'utente dice 'lunedì prossimo', calcola la data corretta (Lunedì 15 Giugno 2026).\n- Se l'utente non specifica l'anno, assumi sia il 2026.\n- Restituisci sempre le date e gli orari nel formato ISO 8601 standard (YYYY-MM-DDTHH:MM:SS).\n\nSe le informazioni fornite sono incomplete, chiedi chiarimenti in modo conciso prima di invocare il tool."
     },
     "C0BABSUS9DJ": {
         "agente": "eni",
@@ -701,6 +701,8 @@ def handle_message_events(body, say, client):
                 tools_list.append(search_channel_history)
             if config["agente"] == "jarvis":
                 tools_list.append(check_recent_emails)
+                tools_list.append(check_vercel_status)
+                tools_list.append(check_github_commits)
 
             # Call Google Gemini using robust helper with fallback
             gemini_response = call_gemini(
@@ -744,6 +746,14 @@ def handle_message_events(body, say, client):
                                 query=args_dict.get("query"),
                                 channel_id=args_dict.get("channel_id"),
                                 limit=args_dict.get("limit", 100)
+                            )
+                        elif tool_name == "check_vercel_status":
+                            res = check_vercel_status(limit=args_dict.get("limit", 3))
+                        elif tool_name == "check_github_commits":
+                            res = check_github_commits(
+                                repo_owner=args_dict.get("repo_owner"),
+                                repo_name=args_dict.get("repo_name"),
+                                limit=args_dict.get("limit", 3)
                             )
                         else:
                             res = f"Tool {tool_name} executed."

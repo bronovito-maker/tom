@@ -665,8 +665,11 @@ def generate_handyman_quote(
         return "⚠️ Errore nel formato delle voci di spesa inviate a Tom."
         
     data_oggi = datetime.now().strftime('%d/%m/%Y')
-    # Numero preventivo fittizio basato su timestamp per l'univocità
-    num_preventivo = f"PV-{datetime.now().strftime('%Y-%M%S')}"
+    
+    # Generate sequential-like quote number: N. [DayOfYear] - Anno [Year]
+    now = datetime.now()
+    day_of_year = now.strftime('%j')
+    num_preventivo = f"N. {day_of_year.zfill(3)} - Anno {now.year}"
     
     # Calcolo dei totali
     totale_complessivo = sum(item.get('price', 0) for item in items)
@@ -677,92 +680,305 @@ def generate_handyman_quote(
         desc = item.get('description', '')
         sub_desc = item.get('details', '')
         price = item.get('price', 0)
+        
+        desc_html = f"<strong>{desc}</strong>"
+        if sub_desc:
+            desc_html += f"<br><span style='font-size: 8.5pt; color: #718096;'>{sub_desc}</span>"
+            
         table_rows += f"""
         <tr>
-            <td><strong>{desc}</strong><br><span style="font-size: 9pt; color: #718096;">{sub_desc}</span></td>
-            <td class="text-right">1</td>
+            <td>{desc_html}</td>
+            <td class="text-center">1</td>
+            <td class="text-right">{price:,.2f} €</td>
             <td class="text-right">{price:,.2f} €</td>
         </tr>
         """
 
-    # Note di fallback se non specificate
-    if not notes:
-        notes = "Il presente preventivo è una stima economica basata sulle informazioni fornite. Eventuali variazioni sui materiali verranno concordate."
+    # Note aggiuntive
+    notes_extra = ""
+    if notes:
+        notes_extra = f"<p style='margin-top: 8px;'><strong>Note aggiuntive:</strong> {notes}</p>"
 
-    # Template HTML (Versione snella e pulita)
+    # Template HTML (Versione fedele ai file docx)
     html_template = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <meta charset="utf-8">
         <style>
-            @page {{ size: A4; margin: 20mm 15mm; }}
-            body {{ font-family: 'Arial', sans-serif; color: #2d3748; line-height: 1.4; font-size: 10pt; }}
-            .header {{ border-bottom: 3px solid #3182ce; padding-bottom: 15px; margin-bottom: 25px; }}
-            .title {{ font-size: 24pt; font-weight: bold; color: #2b6cb0; text-transform: uppercase; margin: 0; }}
-            .meta-table {{ width: 100%; margin-bottom: 25px; border-collapse: collapse; }}
-            .meta-table td {{ width: 50%; vertical-align: top; }}
-            .info-block h3 {{ font-size: 11pt; color: #2b6cb0; border-bottom: 1px solid #e2e8f0; padding-bottom: 3px; width: 90%; text-transform: uppercase; }}
-            .info-block p {{ margin: 3px 0; color: #4a5568; }}
-            .items-table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
-            .items-table th {{ background-color: #2b6cb0; color: white; padding: 10px; text-align: left; text-transform: uppercase; font-size: 9pt; }}
-            .items-table td {{ padding: 12px 10px; border-bottom: 1px solid #e2e8f0; }}
-            .text-right {{ text-align: right; }}
-            .total-box {{ font-size: 13pt; font-weight: bold; color: #2b6cb0; border-top: 2px solid #2b6cb0; padding-top: 10px; }}
-            .notes {{ margin-top: 40px; background-color: #ebf8ff; border-left: 4px solid #3182ce; padding: 15px; }}
+            @page {{
+                size: A4;
+                margin: 20mm 15mm 20mm 15mm;
+                @bottom-right {{
+                    content: "Pagina " counter(page) " di " counter(pages);
+                    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                    font-size: 8pt;
+                    color: #718096;
+                }}
+            }}
+            body {{
+                font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                color: #2d3748;
+                line-height: 1.5;
+                font-size: 10pt;
+            }}
+            .header-table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-bottom: 25px;
+            }}
+            .header-table td {{
+                vertical-align: top;
+            }}
+            .brand {{
+                font-size: 24pt;
+                font-weight: bold;
+                color: #1a202c;
+                line-height: 1.1;
+                margin: 0;
+            }}
+            .brand-sub {{
+                font-size: 10pt;
+                color: #718096;
+                margin: 5px 0 0 0;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+            }}
+            .provider-details {{
+                text-align: right;
+                font-size: 9pt;
+                color: #4a5568;
+                line-height: 1.4;
+            }}
+            .title-container {{
+                border-bottom: 2px solid #2d3748;
+                padding-bottom: 5px;
+                margin-bottom: 20px;
+            }}
+            .doc-title {{
+                font-size: 18pt;
+                font-weight: bold;
+                color: #2d3748;
+                text-transform: uppercase;
+                margin: 0;
+                letter-spacing: 0.5px;
+            }}
+            .meta-table {{
+                width: 45%;
+                border-collapse: collapse;
+                margin-bottom: 25px;
+            }}
+            .meta-table th {{
+                background-color: #edf2f7;
+                color: #2d3748;
+                font-size: 8.5pt;
+                font-weight: bold;
+                text-transform: uppercase;
+                padding: 6px 10px;
+                border: 1px solid #cbd5e0;
+                text-align: center;
+            }}
+            .meta-table td {{
+                padding: 8px 10px;
+                border: 1px solid #cbd5e0;
+                text-align: center;
+                font-size: 9.5pt;
+            }}
+            .section-title {{
+                font-size: 11pt;
+                font-weight: bold;
+                color: #2d3748;
+                text-transform: uppercase;
+                border-bottom: 1px solid #e2e8f0;
+                padding-bottom: 4px;
+                margin-top: 25px;
+                margin-bottom: 10px;
+            }}
+            .client-table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-bottom: 25px;
+            }}
+            .client-table td {{
+                padding: 8px 12px;
+                border: 1px solid #cbd5e0;
+                vertical-align: top;
+            }}
+            .client-table td.label {{
+                width: 25%;
+                background-color: #f7fafc;
+                font-weight: bold;
+                color: #4a5568;
+                font-size: 9pt;
+            }}
+            .items-table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 15px;
+                margin-bottom: 20px;
+            }}
+            .items-table th {{
+                background-color: #2d3748;
+                color: #ffffff;
+                padding: 10px 12px;
+                font-size: 9pt;
+                font-weight: bold;
+                text-transform: uppercase;
+                text-align: left;
+            }}
+            .items-table td {{
+                padding: 10px 12px;
+                border-bottom: 1px solid #cbd5e0;
+                border-left: 1px solid #cbd5e0;
+                border-right: 1px solid #cbd5e0;
+                font-size: 9.5pt;
+            }}
+            .text-right {{
+                text-align: right;
+            }}
+            .text-center {{
+                text-align: center;
+            }}
+            .total-row td {{
+                border-bottom: none;
+                border-left: none;
+                border-right: none;
+                font-weight: bold;
+                padding-top: 15px;
+            }}
+            .total-label {{
+                font-size: 10pt;
+                color: #4a5568;
+                text-transform: uppercase;
+            }}
+            .total-amount {{
+                font-size: 12pt;
+                color: #2d3748;
+            }}
+            .notes-block {{
+                background-color: #f7fafc;
+                border: 1px solid #cbd5e0;
+                border-left: 4px solid #2d3748;
+                padding: 15px;
+                margin-top: 35px;
+                font-size: 9pt;
+                color: #4a5568;
+                line-height: 1.4;
+            }}
+            .notes-block p {{
+                margin: 4px 0;
+            }}
+            .signature-table {{
+                width: 100%;
+                margin-top: 60px;
+                border-collapse: collapse;
+            }}
+            .signature-table td {{
+                width: 50%;
+                font-size: 9.5pt;
+                color: #4a5568;
+                vertical-align: bottom;
+                padding-bottom: 30px;
+            }}
         </style>
     </head>
     <body>
-        <div class="header">
-            <h1 class="title">Nikituttofare</h1>
-            <p style="margin: 5px 0 0 0; color: #4a5568; font-style: italic;">Riparazioni Domestiche in Riviera Romagnola</p>
-        </div>
-        <table class="meta-table">
+        <table class="header-table">
             <tr>
                 <td>
-                    <div class="info-block">
-                        <h3>Prestatore</h3>
-                        <p><strong>Nikita (Nikituttofare)</strong></p>
-                        <p>Rimini / Riccione / Bellaria</p>
-                    </div>
+                    <h1 class="brand">NikiTuttoFare</h1>
+                    <p class="brand-sub">Servizi Domestici e Riparazioni</p>
                 </td>
-                <td>
-                    <div class="info-block">
-                        <h3>Cliente</h3>
-                        <p><strong>{customer_name}</strong></p>
-                        <p>{address}, {city}</p>
-                    </div>
+                <td class="provider-details">
+                    <strong>Nikita Bronovs</strong><br>
+                    Riccione, RN<br>
+                    Codice Fiscale: BRNNKT00C10Z145R<br>
+                    Telefono: +39 346 102 7447<br>
+                    Email: bronovito@gmail.com
                 </td>
             </tr>
         </table>
-        <p><strong>Documento:</strong> {num_preventivo} | <strong>Data:</strong> {data_oggi}</p>
-        
+
+        <div class="title-container">
+            <h2 class="doc-title">Preventivo</h2>
+        </div>
+
+        <table class="meta-table">
+            <thead>
+                <tr>
+                    <th>Data di Emissione</th>
+                    <th>Preventivo N.</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>{data_oggi}</td>
+                    <td>{num_preventivo}</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="section-title">Dati Cliente</div>
+        <table class="client-table">
+            <tr>
+                <td class="label">Nome / Ragione Sociale</td>
+                <td>{customer_name}</td>
+            </tr>
+            <tr>
+                <td class="label">Indirizzo di Riferimento</td>
+                <td>{address}, {city}</td>
+            </tr>
+        </table>
+
+        <div class="section-title">Oggetto Intervento</div>
+        <p style="margin: 5px 0 20px 0; font-size: 9.5pt; color: #2d3748;">
+            Preventivo per servizi di montaggio, installazioni domestiche e interventi di manutenzione/riparazione presso l'abitazione del cliente.
+        </p>
+
+        <div class="section-title">Descrizione Attività e Costi</div>
         <table class="items-table">
             <thead>
                 <tr>
                     <th>Descrizione Lavoro</th>
-                    <th style="text-align: right; width: 10%;">Q.tà</th>
-                    <th style="text-align: right; width: 20%;">Importo</th>
+                    <th class="text-center" style="width: 10%;">Q.tà</th>
+                    <th class="text-right" style="width: 20%;">Prezzo Unitario</th>
+                    <th class="text-right" style="width: 20%;">Totale</th>
                 </tr>
             </thead>
             <tbody>
                 {table_rows}
+                <tr class="total-row">
+                    <td colspan="2"></td>
+                    <td class="text-right total-label">TOTALE IMPONIBILE</td>
+                    <td class="text-right total-amount">{totale_complessivo:,.2f} €</td>
+                </tr>
+                <tr class="total-row" style="padding-top: 0;">
+                    <td colspan="2"></td>
+                    <td class="text-right total-label">TOTALE COMPLESSIVO</td>
+                    <td class="text-right total-amount" style="font-size: 13pt; color: #1a202c; border-top: 1px solid #cbd5e0; padding-top: 5px;">{totale_complessivo:,.2f} €</td>
+                </tr>
             </tbody>
         </table>
-        
-        <table style="width: 100%; margin-top: 20px;">
+
+        <div class="notes-block">
+            <strong style="color: #2d3748; font-size: 9.5pt; text-transform: uppercase; display: block; margin-bottom: 5px;">Note e Condizioni Operative</strong>
+            <p>Il preventivo include esclusivamente il montaggio/installazione standard su predisposizioni esistenti. Eventuali modifiche elettriche, fissaggi speciali, materiali aggiuntivi o problematiche non visibili in fase di sopralluogo saranno conteggiati separatamente.</p>
+            <p><strong>Validità:</strong> Il presente documento ha una validità di 14 giorni dalla data di emissione.</p>
+            {notes_extra}
+        </div>
+
+        <table class="signature-table">
             <tr>
-                <td style="width: 60%;"></td>
-                <td style="width: 40%;" class="total-box">
-                    <span style="font-size: 10pt; color: #4a5568; font-weight: normal;">TOTALE STIMATO:</span><br>
-                    {totale_complessivo:,.2f} €
+                <td>
+                    Firma per Accettazione (Cliente)<br><br><br>
+                    __________________________________________
+                </td>
+                <td style="text-align: right;">
+                    Firma Operatore (NikiTuttoFare)<br><br><br>
+                    __________________________________________
                 </td>
             </tr>
         </table>
-        <div class="notes">
-            <strong style="color: #2b6cb0; font-size: 9pt; text-transform: uppercase;">Note e Condizioni</strong>
-            <p style="margin: 5px 0 0 0; font-size: 9.5pt;">{notes}</p>
-        </div>
     </body>
     </html>
     """

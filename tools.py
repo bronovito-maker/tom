@@ -376,3 +376,83 @@ def check_supabase_logs(project: str = "TOM", table_name: str = "logs", limit: i
     except Exception as e:
         return f"⚠️ Errore Supabase ({project}) sulla tabella {table_name}: {str(e)}"
 
+
+def create_handyman_ticket(
+    customer_name: str,
+    description: str,
+    category: str,
+    contact_phone: str = None,
+    city: str = None,
+    address: str = None,
+    price_range_max: float = None,
+    scheduled_at: str = None
+) -> str:
+    """
+    Crea un nuovo ticket/intervento nel CRM di Nikituttofare su Supabase.
+    
+    Args:
+        customer_name: Nome del cliente.
+        description: Descrizione del guasto o del lavoro da fare.
+        category: Categoria in inglese ('plumbing', 'electric', 'locksmith', 'climate', 'handyman', 'painting', etc.).
+        contact_phone: Numero di telefono del cliente.
+        city: Città dell'intervento (Rimini, Riccione, etc.).
+        address: Indirizzo completo.
+        price_range_max: Prezzo massimo stimato o preventivato.
+        scheduled_at: Data e ora programmata in formato ISO (YYYY-MM-DDTHH:MM:SS).
+    """
+    url = os.environ.get("SUPABASE_TOM_URL")
+    key = os.environ.get("SUPABASE_TOM_SERVICE_ROLE_KEY")
+    
+    if not url or not key:
+        return "⚠️ Errore: Credenziali Supabase TOM mancanti su Railway."
+
+    clean_phone = None
+    if contact_phone:
+        phone_digits = "".join([c for c in str(contact_phone) if c.isdigit()])
+        if phone_digits:
+            try:
+                clean_phone = int(phone_digits)
+            except:
+                clean_phone = phone_digits
+
+    valid_categories = ['plumbing', 'electric', 'locksmith', 'climate', 'handyman', 'painting', 'cleaning', 'carpentry', 'moving', 'garden', 'appliances', 'renovations', 'generic']
+    if category not in valid_categories:
+        category = 'generic'
+
+    payload = {
+        "customer_name": customer_name,
+        "description": description,
+        "category": category,
+        "contact_phone": clean_phone,
+        "city": city,
+        "address": address,
+        "price_range_max": price_range_max,
+        "source": "phone_manual",
+        "status": "new",
+        "payment_status": "pending"
+    }
+
+    if scheduled_at:
+        payload["scheduled_at"] = scheduled_at
+
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation"
+    }
+
+    try:
+        api_url = f"{url}/rest/v1/tickets"
+        response = requests.post(api_url, json=payload, headers=headers)
+        
+        if response.status_code in [200, 201]:
+            created_ticket = response.json()[0]
+            ticket_id = created_ticket.get("id", "Sconosciuto")
+            return f"✅ Ticket creato con successo! ID: {ticket_id}. Cliente: {customer_name}, Categoria: {category}."
+        else:
+            return f"❌ Errore Supabase durante l'inserimento. Status: {response.status_code}, Dettagli: {response.text}"
+            
+    except Exception as e:
+        return f"⚠️ Errore di rete/codice durante la creazione del ticket: {str(e)}"
+

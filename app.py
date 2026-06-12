@@ -7,7 +7,7 @@ from slack_bolt.adapter.fastapi import SlackRequestHandler
 from google import genai  # Google GenAI SDK
 from google.genai import types  # For Part/bytes operations
 from openai import OpenAI  # OpenAI client compatible with DeepSeek
-from tools import create_calendar_event, check_recent_emails, search_channel_history, check_vercel_status, check_github_commits, check_baserow_leads, check_supabase_logs  # Helper tools
+from tools import create_calendar_event, check_recent_emails, search_channel_history, check_vercel_status, check_github_commits, check_baserow_leads, check_supabase_logs, create_handyman_ticket  # Helper tools
 
 # Load environment variables from .env file
 load_dotenv()
@@ -129,10 +129,27 @@ CHANNELS = {
         "system": "Sei l'esperto di digital marketing e Google Ads di Nikita. Analizzi le performance delle campagne e proponi ottimizzazioni basate sui dati."
     },
     "C0BA846TML2": {
-        "agente": "handyman",
-        "provider": "gemini",
-        "model": "gemini-3.1-flash-lite",
-        "system": "Sei l'assistente tecnico handyman di Nikita. Lo aiuti a strutturare preventivi e riparazioni locali. Hai a disposizione lo strumento chiamato create_calendar_event per fissare sopralluoghi o appuntamenti, e search_channel_history per cercare messaggi passati nel canale. Quando Nikita ti chiede di fissare o spostare un appuntamento o di cercare discussioni passate, usa il tool corrispondente estraendo i dati. Anno corrente: 2026. Oggi è Venerdì 12 Giugno 2026. Assumi il 2026 se non specificato. Formato ISO 8601 (YYYY-MM-DDTHH:MM:SS)."
+        "agente": "handyman", 
+        "provider": "gemini", 
+        "model": "gemini-3.1-flash-lite", 
+        "system": (
+            "Sei Jarvis (tom), l'assistente esecutivo e braccio destro operativo di Nikita per 'Nikituttofare'. "
+            "Il tuo compito principale è ascoltare i dettagli dei clienti (spesso dettati al volo da Nikita dal cantiere) "
+            "ed eseguire il tool `create_handyman_ticket` per registrarli nel database gestionale.\n\n"
+            "Regole di conversione Categoria (FONDAMENTALI):\n"
+            "- Perdite d'acqua, bidet, scarichi, rubinetti, tubi ➔ 'plumbing'\n"
+            "- Cortocircuiti, prese, quadri elettrici, luci, impianti ➔ 'electric'\n"
+            "- Porte bloccate, chiavi, serrature, cilindri, infissi ➔ 'locksmith'\n"
+            "- Condizionatori, split, ricariche gas, pompe di calore ➔ 'climate'\n"
+            "- Tinteggiatura, pittore, cartongesso ➔ 'painting'\n"
+            "- Se il lavoro non rientra in questi o è montaggio mobili/riparazioni generiche ➔ 'handyman' o 'generic'.\n\n"
+            "Regole di parsing dei messaggi:\n"
+            "Nikita potrebbe scriverti un testo disordinato tipo: 'Segna Barbara via pascoli rimini serratura bloccata preventivo max 120 euro'. "
+            "Tu devi ripulire i dati: customer_name='Barbara', city='Rimini', address='Via Pascoli', description='Serratura bloccata', "
+            "category='locksmith', price_range_max=120.0.\n\n"
+            "Oggi è Venerdì 12 Giugno 2026. Se viene concordato un sopralluogo per 'domani' o nei prossimi giorni, calcola la data ISO "
+            "e passala nel parametro `scheduled_at`."
+        )
     },
     "C0BA1NX5Q03": {
         "agente": "jarvis",
@@ -622,7 +639,8 @@ AVAILABLE_TOOLS = {
     "create_calendar_event": create_calendar_event,
     "search_channel_history": search_channel_history,
     "check_baserow_leads": check_baserow_leads,
-    "check_supabase_logs": check_supabase_logs
+    "check_supabase_logs": check_supabase_logs,
+    "create_handyman_ticket": create_handyman_ticket
 }
 
 # Capture any text message sent to channels where the bot is a member
@@ -701,6 +719,7 @@ def handle_message_events(body, say, client):
             if config["agente"] in ("jarvis", "handyman"):
                 tools_list.append(create_calendar_event)
                 tools_list.append(search_channel_history)
+                tools_list.append(create_handyman_ticket)
             if config["agente"] == "jarvis":
                 tools_list.append(check_recent_emails)
                 tools_list.append(check_vercel_status)
@@ -766,6 +785,23 @@ def handle_message_events(body, say, client):
                                 project=args_dict.get("project", "TOM"),
                                 table_name=args_dict.get("table_name", "logs"),
                                 limit=args_dict.get("limit", 5)
+                            )
+                        elif tool_name == "create_handyman_ticket":
+                            price_max = args_dict.get("price_range_max")
+                            if price_max is not None:
+                                try:
+                                    price_max = float(price_max)
+                                except:
+                                    pass
+                            res = create_handyman_ticket(
+                                customer_name=args_dict.get("customer_name"),
+                                description=args_dict.get("description"),
+                                category=args_dict.get("category"),
+                                contact_phone=args_dict.get("contact_phone"),
+                                city=args_dict.get("city"),
+                                address=args_dict.get("address"),
+                                price_range_max=price_max,
+                                scheduled_at=args_dict.get("scheduled_at")
                             )
                         else:
                             res = f"Tool {tool_name} executed."

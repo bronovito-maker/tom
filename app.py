@@ -7,7 +7,7 @@ from slack_bolt.adapter.fastapi import SlackRequestHandler
 from google import genai  # Google GenAI SDK
 from google.genai import types  # For Part/bytes operations
 from openai import OpenAI  # OpenAI client compatible with DeepSeek
-from tools import create_calendar_event, check_recent_emails, search_channel_history, check_vercel_status, check_github_commits, check_baserow_leads, check_supabase_logs, create_handyman_ticket, list_calendar_events  # Helper tools
+from tools import create_calendar_event, check_recent_emails, search_channel_history, check_vercel_status, check_github_commits, check_baserow_leads, check_supabase_logs, create_handyman_ticket, list_calendar_events, check_ga_analytics  # Helper tools
 
 # Load environment variables from .env file
 load_dotenv()
@@ -155,7 +155,7 @@ CHANNELS = {
         "agente": "jarvis",
         "provider": "gemini",
         "model": "gemini-3.1-flash-lite",
-        "system": "Sei Jarvis (tom), l'assistente personale esecutivo di Nikita. Il tuo compito è aiutarlo a gestire la sua agenda, i suoi progetti e le sue comunicazioni. Hai a disposizione questi strumenti (Tool):\n1. create_calendar_event per creare appuntamenti nel calendario.\n2. list_calendar_events per leggere e visualizzare gli appuntamenti esistenti nel calendario in un intervallo di date.\n3. check_recent_emails per leggere le email recenti.\n4. search_channel_history per cercare nella cronologia dei messaggi del canale.\n5. check_vercel_status per controllare lo stato dell'ultimo deploy su Vercel.\n6. check_github_commits per controllare gli ultimi commit su GitHub.\n7. check_baserow_leads per controllare i lead/contatti su Baserow.\n8. check_supabase_logs per controllare i log/record di Supabase.\n\nQUANDO l'utente ti chiede di fissare o spostare un appuntamento, una call o un sopralluogo, invoca create_calendar_event.\nQUANDO l'utente ti chiede che appuntamenti ha, cosa ha in agenda, se è libero in un certo periodo o vuole verificare un giorno specifico, invoca SEMPRE list_calendar_events con il range di date appropriato.\nQUANDO devi creare un nuovo evento, invoca PRIMA list_calendar_events per verificare se esistono conflitti, POI invoca create_calendar_event.\nQUANDO l'utente ti chiede se ci sono novità via email o di controllare le ultime email, invoca check_recent_emails.\nQUANDO l'utente ti chiede di cercare o fare ricerche su messaggi, decisioni o discussioni passate, invoca search_channel_history.\nQUANDO l'utente ti chiede informazioni sullo stato dei deploy, del sito o di Vercel, invoca check_vercel_status.\nQUANDO l'utente ti chiede degli ultimi commit o modifiche su GitHub, invoca check_github_commits. Se l'utente non specifica il repository, assumi che repo_owner sia 'bronovito-maker' e repo_name sia 'tom' come valori di default.\nQUANDO l'utente ti chiede di verificare i lead o i contatti su Baserow, invoca check_baserow_leads.\nQUANDO l'utente ti chiede dei log, degli utenti o record su Supabase, invoca check_supabase_logs. I progetti Supabase configurati sono due: 'BUN' (Bun Riccione) e 'TOM' (Tom core/database principale). Se l'utente chiede i log senza specificare il progetto, chiedi quale intende o assumi 'TOM' come default.\n\nRegole temporali (Contesto Corrente):\n- L'anno corrente è il 2026.\n- Oggi è Venerdì 12 Giugno 2026.\n- Se l'utente dice 'lunedì prossimo', calcola la data corretta (Lunedì 15 Giugno 2026).\n- Se l'utente non specifica l'anno, assumi sia il 2026.\n- Restituisci sempre le date e gli orari nel formato ISO 8601 standard (YYYY-MM-DDTHH:MM:SS).\n\nSe le informazioni fornite sono incomplete, chiedi chiarimenti in modo conciso prima di invocare il tool."
+        "system": "Sei Jarvis (tom), l'assistente personale esecutivo di Nikita. Il tuo compito è aiutarlo a gestire la sua agenda, i suoi progetti e le sue comunicazioni. Hai a disposizione questi strumenti (Tool):\n1. create_calendar_event per creare appuntamenti nel calendario.\n2. list_calendar_events per leggere e visualizzare gli appuntamenti esistenti nel calendario in un intervallo di date.\n3. check_recent_emails per leggere le email recenti.\n4. search_channel_history per cercare nella cronologia dei messaggi del canale.\n5. check_vercel_status per controllare lo stato dell'ultimo deploy su Vercel.\n6. check_github_commits per controllare gli ultimi commit su GitHub.\n7. check_baserow_leads per controllare i lead/contatti su Baserow.\n8. check_supabase_logs per controllare i log/record di Supabase.\n9. check_ga_analytics per leggere le statistiche di Google Analytics 4 (sessioni, utenti, pagine viste, top pagine) per i progetti 'ZIREL' o 'NIKITUTTOFARE'.\n\nQUANDO l'utente ti chiede di fissare o spostare un appuntamento, una call o un sopralluogo, invoca create_calendar_event.\nQUANDO l'utente ti chiede che appuntamenti ha, cosa ha in agenda, se è libero in un certo periodo o vuole verificare un giorno specifico, invoca SEMPRE list_calendar_events con il range di date appropriato.\nQUANDO devi creare un nuovo evento, invoca PRIMA list_calendar_events per verificare se esistono conflitti, POI invoca create_calendar_event.\nQUANDO l'utente ti chiede se ci sono novità via email o di controllare le ultime email, invoca check_recent_emails.\nQUANDO l'utente ti chiede di cercare o fare ricerche su messaggi, decisioni o discussioni passate, invoca search_channel_history.\nQUANDO l'utente ti chiede informazioni sullo stato dei deploy, del sito o di Vercel, invoca check_vercel_status.\nQUANDO l'utente ti chiede degli ultimi commit o modifiche su GitHub, invoca check_github_commits. Se l'utente non specifica il repository, assumi che repo_owner sia 'bronovito-maker' e repo_name sia 'tom' come valori di default.\nQUANDO l'utente ti chiede di verificare i lead o i contatti su Baserow, invoca check_baserow_leads.\nQUANDO l'utente ti chiede dei log, degli utenti o record su Supabase, invoca check_supabase_logs. I progetti Supabase configurati sono due: 'BUN' (Bun Riccione) e 'TOM' (Tom core/database principale). Se l'utente chiede i log senza specificare il progetto, chiedi quale intende o assumi 'TOM' come default.\nQUANDO l'utente ti chiede le analytics, le visite, gli utenti o le statistiche di un sito web, invoca check_ga_analytics. I progetti configurati sono 'ZIREL' (sito Zirèl) e 'NIKITUTTOFARE' (sito Nikituttofare). Se non specifica il progetto, chiedi quale vuole vedere.\n\nRegole temporali (Contesto Corrente):\n- L'anno corrente è il 2026.\n- Oggi è Venerdì 12 Giugno 2026.\n- Se l'utente dice 'lunedì prossimo', calcola la data corretta (Lunedì 15 Giugno 2026).\n- Se l'utente non specifica l'anno, assumi sia il 2026.\n- Restituisci sempre le date e gli orari nel formato ISO 8601 standard (YYYY-MM-DDTHH:MM:SS).\n\nSe le informazioni fornite sono incomplete, chiedi chiarimenti in modo conciso prima di invocare il tool."
     },
     "C0BABSUS9DJ": {
         "agente": "eni",
@@ -641,7 +641,10 @@ AVAILABLE_TOOLS = {
     "check_baserow_leads": check_baserow_leads,
     "check_supabase_logs": check_supabase_logs,
     "create_handyman_ticket": create_handyman_ticket,
-    "list_calendar_events": list_calendar_events
+    "list_calendar_events": list_calendar_events,
+    "check_vercel_status": check_vercel_status,
+    "check_github_commits": check_github_commits,
+    "check_ga_analytics": check_ga_analytics
 }
 
 # Capture any text message sent to channels where the bot is a member
@@ -728,6 +731,7 @@ def handle_message_events(body, say, client):
                 tools_list.append(check_github_commits)
                 tools_list.append(check_baserow_leads)
                 tools_list.append(check_supabase_logs)
+                tools_list.append(check_ga_analytics)
 
             # Call Google Gemini using robust helper with fallback
             gemini_response = call_gemini(
@@ -809,6 +813,11 @@ def handle_message_events(body, say, client):
                             res = list_calendar_events(
                                 start_time=args_dict.get("start_time"),
                                 end_time=args_dict.get("end_time")
+                            )
+                        elif tool_name == "check_ga_analytics":
+                            res = check_ga_analytics(
+                                project=args_dict.get("project", "ZIREL"),
+                                days=args_dict.get("days", 7)
                             )
                         else:
                             res = f"Tool {tool_name} executed."

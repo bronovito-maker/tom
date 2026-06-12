@@ -523,3 +523,117 @@ def list_calendar_events(start_time: str, end_time: str) -> str:
     except Exception as e:
         return f"⚠️ Errore durante la lettura del calendario Google: {str(e)}"
 
+
+# Google Analytics 4 Property IDs
+GA4_PROPERTIES = {
+    "ZIREL": "541486430",
+    "NIKITUTTOFARE": "541507101"
+}
+
+def check_ga_analytics(project: str = "ZIREL", days: int = 7) -> str:
+    """
+    Recupera le statistiche di Google Analytics 4 (sessioni, utenti, pagine viste, top pagine)
+    per uno dei progetti configurati.
+
+    Args:
+        project: Il progetto da analizzare. Valori validi: 'ZIREL' o 'NIKITUTTOFARE'. Default 'ZIREL'.
+        days: Numero di giorni da analizzare a ritroso da oggi (default 7).
+    """
+    import json
+    import google.auth.transport.requests as ga_transport
+    from datetime import date, timedelta
+
+    project_upper = project.upper()
+    if project_upper not in GA4_PROPERTIES:
+        return f"⚠️ Progetto '{project}' non riconosciuto. Usa 'ZIREL' o 'NIKITUTTOFARE'."
+
+    property_id = GA4_PROPERTIES[project_upper]
+    ga_scopes = ["https://www.googleapis.com/auth/analytics.readonly"]
+
+    try:
+        if os.path.exists(SERVICE_ACCOUNT_FILE):
+            creds = service_account.Credentials.from_service_account_file(
+                SERVICE_ACCOUNT_FILE, scopes=ga_scopes
+            )
+        elif os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON"):
+            info = json.loads(os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON"))
+            creds = service_account.Credentials.from_service_account_info(
+                info, scopes=ga_scopes
+            )
+        else:
+            return "⚠️ Credenziali Google non trovate (né file locale né variabile d'ambiente)."
+
+        # Refresh token
+        auth_req = ga_transport.Request()
+        creds.refresh(auth_req)
+
+        today = date.today()
+        start_date = (today - timedelta(days=days)).strftime("%Y-%m-%d")
+        end_date = today.strftime("%Y-%m-%d")
+
+        api_url = f"https://analyticsdata.googleapis.com/v1beta/properties/{property_id}:runReport"
+        headers = {
+            "Authorization": f"Bearer {creds.token}",
+            "Content-Type": "application/json"
+        }
+
+        # Query 1: totali aggregati
+        totals_payload = {
+            "dateRanges": [{"startDate": start_date, "endDate": end_date}],
+            "metrics": [
+                {"name": "sessions"},
+                {"name": "activeUsers"},
+                {"name": "newUsers"},
+                {"name": "screenPageViews"}
+            ]
+        }
+        totals_resp = requests.post(api_url, json=totals_payload, headers=headers)
+        if totals_resp.status_code != 200:
+            return f"❌ Errore GA4 API (totali): {totals_resp.status_code} — {totals_resp.text}"
+
+        totals_data = totals_resp.json()
+        totals = totals_data.get("totals", [{}])[0].get("metricValues", [])
+
+        # Query 2: top 5 pagine per sessioni
+        pages_payload = {
+            "dateRanges": [{"startDate": start_date, "endDate": end_date}],
+            "dimensions": [{"name": "pagePath"}],
+            "metrics": [
+                {"name": "sessions"},
+                {"name": "activeUsers"}
+            ],
+            "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+            "limit": 5
+        }
+        pages_resp = requests.post(api_url, json=pages_payload, headers=headers)
+        if pages_resp.status_code != 200:
+            return f"❌ Errore GA4 API (pagine): {pages_resp.status_code} — {pages_resp.text}"
+
+        pages_data = pages_resp.json()
+
+        project_labels = {"ZIREL": "Zirèl", "NIKITUTTOFARE": "Nikituttofare"}
+        label = project_labels.get(project_upper, project_upper)
+
+        output = f"📊 *Google Analytics — {label}*\n"
+        output += f"📅 Periodo: {start_date} → {end_date} ({days} giorni)\n\n"
+
+        if totals:
+            output += f"👥 *Utenti attivi:* {totals[1].get('value', 'N/A')}\n"
+            output += f"🆕 *Nuovi utenti:* {totals[2].get('value', 'N/A')}\n"
+            output += f"📈 *Sessioni:* {totals[0].get('value', 'N/A')}\n"
+            output += f"👁️ *Pagine viste:* {totals[3].get('value', 'N/A')}\n\n"
+
+        rows = pages_data.get("rows", [])
+        if rows:
+            output += f"🏆 *Top {len(rows)} pagine per sessioni:*\n"
+            for row in rows:
+                page = row.get("dimensionValues", [{}])[0].get("value", "/")
+                metrics = row.get("metricValues", [])
+                sessions_val = metrics[0].get("value", "0") if metrics else "0"
+                users_val = metrics[1].get("value", "0") if len(metrics) > 1 else "0"
+                output += f"  📄 `{page}` — {sessions_val} sessioni, {users_val} utenti\n"
+
+        return output
+
+    except Exception as e:
+        return f"⚠️ Errore Google Analytics: {str(e)}"

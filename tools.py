@@ -17,17 +17,23 @@ def create_calendar_event(summary: str, start_time: str, end_time: str, descript
         end_time: Data e ora di fine in formato ISO (es. "2026-06-15T16:00:00").
         description: Dettagli opzionali o note sull'appuntamento.
     """
+    import json
     try:
-        if not os.path.exists(SERVICE_ACCOUNT_FILE):
+        # Try loading from local file first, then fallback to env variable containing JSON string
+        if os.path.exists(SERVICE_ACCOUNT_FILE):
+            creds = service_account.Credentials.from_service_account_file(
+                SERVICE_ACCOUNT_FILE, scopes=SCOPES
+            )
+        elif os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON"):
+            service_account_info = json.loads(os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON"))
+            creds = service_account.Credentials.from_service_account_info(
+                service_account_info, scopes=SCOPES
+            )
+        else:
             return {
                 "status": "error",
-                "message": f"Service Account file {SERVICE_ACCOUNT_FILE} not found."
+                "message": f"Service Account file {SERVICE_ACCOUNT_FILE} not found and GOOGLE_SERVICE_ACCOUNT_JSON env variable is not set."
             }
-
-        # Load credentials from service account JSON file
-        creds = service_account.Credentials.from_service_account_file(
-            SERVICE_ACCOUNT_FILE, scopes=SCOPES
-        )
         
         # Build Calendar service
         service = build('calendar', 'v3', credentials=creds)

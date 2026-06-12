@@ -632,6 +632,10 @@ async def root():
 # Webhook endpoint for Slack Events
 @api.post("/slack/events")
 async def slack_events(request: Request):
+    # Slack resends events if it doesn't receive a 200 within 3 seconds.
+    # Ignore retries to prevent double responses when AI takes longer than that.
+    if request.headers.get("X-Slack-Retry-Num"):
+        return {"status": "ok"}
     return await handler.handle(request)
 
 AVAILABLE_TOOLS = {

@@ -751,12 +751,23 @@ def handle_message_events(body, say, client):
     # Retrieve agent config based on channel
     config = CHANNELS.get(channel_id, DEFAULT_CONFIG)
     
-    # 1. Fetch channel history for context
+    # 1. Fetch channel or thread history for context
     slack_messages = []
     try:
-        history_response = client.conversations_history(channel=channel_id, limit=10)
+        if thread_ts:
+            print(f"DEBUG: Fetching thread replies for thread {thread_ts} (limit=25)...")
+            history_response = client.conversations_replies(channel=channel_id, ts=thread_ts, limit=25)
+        else:
+            print(f"DEBUG: Fetching main channel history (limit=25)...")
+            history_response = client.conversations_history(channel=channel_id, limit=25)
+            
         slack_messages = history_response.get("messages", [])
-        slack_messages.reverse()  # Oldest first
+        
+        # Only reverse for main channel history (which is newest-to-oldest)
+        # Thread replies are already oldest-to-newest
+        if not thread_ts:
+            slack_messages.reverse()  # Oldest first
+            
     except Exception as history_err:
         print(f"⚠️ Warning: Failed to fetch channel history: {history_err}")
         # Fallback to current message only if history API fails

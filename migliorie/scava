@@ -1,0 +1,87 @@
+================================================================================
+ANALISI COMPLETA DEL PROGETTO "TOM" (Jarvis Core) — STATO FIX
+================================================================================
+Data: 13 Giugno 2026  |  Ultimo aggiornamento: 13 Giugno 2026
+
+Il progetto è un bot Slack chiamato "Tom" / "Jarvis" che funge da assistente AI
+per Nikituttofare (servizi domestici). Usa FastAPI + Slack Bolt come backend HTTP,
+con Google Gemini e DeepSeek come provider AI. Include 11 tool per operazioni
+come creazione eventi calendario, lettura email, generazione PDF preventivi, ecc.
+
+================================================================================
+🔴 PROBLEMI CRITICI
+================================================================================
+
+1. [BLOCCATO DALL'UTENTE] ENI system prompt (app.py, righe ~320-761)
+   L'utente ha esplicitamente richiesto di NON toccare il blocco ENI.
+   "non toccare eni, è sensibile, è una IA modificata per mio uso interno
+   privato, non toccare l'originale. non cancellare, non fare modifiche."
+
+2. [✓ FIXATO] CREDENZIALI ESPOSTE NEL FILE .env.example
+   File: .env.example
+   Sostituiti URL Supabase reali e chiave publishable con placeholder.
+   Aggiunta variabile SLACK_HANDYMAN_CHANNEL_ID.
+
+3. [✓ VERIFICATO] SERVICE ACCOUNT JSON
+   Il file instructions/gen-lang-client-0592360914-f5f267dab54d.json
+   è protetto da .gitignore (regola *.json). MAI committato su git.
+   La chiave rimane su disco — da spostare fuori repo in futuro.
+
+================================================================================
+🟡 PROBLEMI DI CODICE E BUG
+================================================================================
+
+4. [✓ FIXATO] FUNZIONE redact_pii() (app.py, righe 42-52)
+   Sostituiti i 3 pattern fragili con:
+   - Email regex che supporta sottodomini (user@mail.example.com)
+   - Due regex per numeri di telefono italiani (+39, 0039, cellulari 3XX, fissi 0XX)
+   - Rimosso il pattern generico per 9+ cifre (catturava ID e codici)
+
+5. [✓ FIXATO] datetime.utcnow() DEPRECATO (cron_reviews.py, riga 22)
+   Sostituito con: from datetime import datetime, timedelta, timezone
+                   now = datetime.now(timezone.utc)
+   ISO format corretto con .replace("+00:00", "Z")
+
+6. [✓ FIXATO] DIPENDENZE MANCANTI (requirements.txt)
+   Aggiunte: slack-sdk>=3.20.0, pytz>=2024.1
+
+7. [APERTO] DEEPSEEK NON SUPPORTA FUNCTION CALLING
+   I canali dev/tech (provider "deepseek") non ricevono i tool.
+   Solo Gemini esegue function calling. Da documentare o implementare bridge.
+
+8. [✓ FIXATO] GESTIONE ERRORI FETCH HISTORY (app.py, righe 884-914)
+   Aggiunto controllo esplicito su history_response.get("ok", True).
+   Aggiunta detection rate limit (429) con log dedicato.
+   Fallback preservato: se history fallisce, usa solo il messaggio corrente.
+
+9. [✓ FIXATO] WEASYPRINT DOCKER INCOMPLETE (Dockerfile)
+   Aggiunte dipendenze: libgobject-2.0-0, fontconfig, fonts-dejavu-core
+   Python base aggiornato da 3.11-slim a 3.12-slim
+   CMD ora usa ${PORT:-3000} (variabile d'ambiente Railway)
+
+10. [APERTO] CONCORRENZA BACKGROUND SUMMARY (app.py, righe 86-171)
+    Lock in-memory (active_summary_workers) non funziona con Uvicorn --workers > 1.
+    Serve lock esterno (Redis, database, file lock) per multi-processo.
+
+================================================================================
+🟢 MIGLIORIE ARCHITETTURALI (non ancora implementate)
+================================================================================
+
+11. Splittare app.py (1261 righe) in moduli
+12. Sostituire print() con logging strutturato
+13. Healthcheck endpoint più profondo (Supabase, API key check)
+14. Aggiungere test (redact_pii, routing canali, mock API)
+15. Gestione rate limit Slack con backoff esponenziale
+16. Timezone dinamico in list_calendar_events() (tools.py, righe 498-501)
+    Attualmente assume sempre +02:00 (CEST). In inverno (CET) è +01:00.
+17. [✓ FIXATO] Channel ID hardcodato in cron_reviews.py → env var SLACK_HANDYMAN_CHANNEL_ID
+
+================================================================================
+📋 FILE MODIFICATI
+================================================================================
+
+  .env.example           — Sanitizzato URL/keys, aggiunta variabile canale
+  requirements.txt       — Aggiunte pytz, slack-sdk
+  cron_reviews.py        — Fix datetime.utcnow() + channel ID env var
+  Dockerfile             — Dipendenze WeasyPrint complete, Python 3.12, PORT dinamica
+  app.py                 — redact_pii() robusto + gestione errori fetch history

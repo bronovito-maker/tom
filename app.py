@@ -38,6 +38,19 @@ supabase_session = requests.Session()
 active_summary_workers = set()
 workers_lock = threading.Lock()
 
+# Helper to redact PII (phone numbers, emails) from logs
+def redact_pii(text: str) -> str:
+    import re
+    if not isinstance(text, str):
+        return text
+    # Redact email addresses (handles subdomains like user@mail.example.com)
+    text = re.sub(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*\.[a-zA-Z]{2,}', '[EMAIL_REDACTED]', text)
+    # Redact Italian phone numbers:
+    # Patterns: +39 XXX..., 0039 XXX..., 3XX XXX XXXX, 0XX XXX XXXX (landline)
+    text = re.sub(r'(?:\+39|0039)?[-\s]?3\d{2}[-\s]?\d{3}[-\s]?\d{4}', '[PHONE_REDACTED]', text)
+    text = re.sub(r'(?:\+39|0039)?[-\s]?0\d{1,3}[-\s]?\d{2,4}[-\s]?\d{3,4}', '[PHONE_REDACTED]', text)
+    return text
+
 # Helper function to download files from Slack
 def download_slack_file(url):
     token = os.environ.get("SLACK_BOT_TOKEN")
@@ -863,7 +876,7 @@ def handle_message_events(body, say, client):
     if event.get("bot_id") is not None:
         return
 
-    print(f"🔹 Received message in channel {channel_id} from user {user}: {text} (Attachments: {len(files)})")
+    print(f"🔹 Received message in channel {channel_id} from user {user}: {redact_pii(text)} (Attachments: {len(files)})")
 
     # Retrieve agent config based on channel
     config = CHANNELS.get(channel_id, DEFAULT_CONFIG)
@@ -877,22 +890,53 @@ def handle_message_events(body, say, client):
         else:
             print(f"DEBUG: Fetching main channel history (limit=25)...")
             history_response = client.conversations_history(channel=channel_id, limit=25)
-            
-        slack_messages = history_response.get("messages", [])
+        
+        if not history_response.get("ok", True):
+            error_type = history_response.get("error", "unknown")
+            print(f"⚠️ Slack API error fetching history: {error_type}")
+            slack_messages = [event]
+        else:
+            slack_messages = history_response.get("messages", [])
         
         # Only reverse for main channel history (which is newest-to-oldest)
         # Thread replies are already oldest-to-newest
-        if not thread_ts:
+        if not thread_ts and slack_messages:
             slack_messages.reverse()  # Oldest first
             
     except Exception as history_err:
-        print(f"⚠️ Warning: Failed to fetch channel history: {history_err}")
+        error_str = str(history_err)
+        if "ratelimited" in error_str.lower() or "429" in error_str:
+            print(f"⚠️ Slack rate limited during history fetch. Using current message only.")
+        else:
+            print(f"⚠️ Warning: Failed to fetch channel history: {history_err}")
         # Fallback to current message only if history API fails
         slack_messages = [event]
 
     # Fetch thread/channel summary
     riassunto = get_thread_summary(channel_id, thread_ts)
     system_instruction_dynamic = config["system"]
+
+    # Inject current date dynamically at runtime in Europe/Rome timezone
+    try:
+        import pytz
+        from datetime import datetime
+        days_it = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
+        months_it = [
+            "", "Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
+            "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"
+        ]
+        rome_tz = pytz.timezone('Europe/Rome')
+        now_rome = datetime.now(rome_tz)
+        day_name = days_it[now_rome.weekday()]
+        day_num = now_rome.day
+        month_name = months_it[now_rome.month]
+        year = now_rome.year
+        current_date_str = f"Oggi è {day_name} {day_num} {month_name} {year}"
+        
+        system_instruction_dynamic = system_instruction_dynamic.replace("Oggi è Venerdì 12 Giugno 2026", current_date_str)
+    except Exception as date_err:
+        print(f"⚠️ Error formatting dynamic date: {date_err}")
+
     if riassunto:
         system_instruction_dynamic += f"\n\n[CONTESTO PRECEDENTE DEL THREAD - LEGGIMI MA NON RIPETERE]:\n{riassunto}"
 
@@ -960,8 +1004,11 @@ def handle_message_events(body, say, client):
                 tools=tools_list
             )
 
-            # Loop to handle one or more function calls iteratively
-            while gemini_response.function_calls:
+            # Loop to handle one or more function calls iteratively (max 5 rounds to prevent infinite loops)
+            tool_round = 0
+            max_tool_rounds = 5
+            while gemini_response.function_calls and tool_round < max_tool_rounds:
+                tool_round += 1
                 # Add the model's call to the conversation history
                 if gemini_response.candidates and gemini_response.candidates[0].content:
                     gemini_contents.append(gemini_response.candidates[0].content)
@@ -978,7 +1025,7 @@ def handle_message_events(body, say, client):
                         args_dict["channel_id"] = channel_id
                     
                     if tool_name in AVAILABLE_TOOLS:
-                        print(f"⚙️ Tom is executing tool: {tool_name} with arguments {args_dict}")
+                        print(f"⚙️ Tom is executing tool: {tool_name} with arguments {redact_pii(str(args_dict))}")
                         
                         if tool_name == "create_calendar_event":
                             res = create_calendar_event(

@@ -201,7 +201,7 @@ def check_vercel_status(limit: int = 3) -> str:
     url = f"https://api.vercel.com/v6/deployments?limit={limit}"
     
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=10)
         if response.status_code != 200:
             return f"Impossibile connettersi a Vercel. Status: {response.status_code}"
             
@@ -252,7 +252,7 @@ def check_github_commits(repo_owner: str, repo_name: str, limit: int = 3) -> str
     url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/commits?per_page={limit}"
     
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=10)
         if response.status_code != 200:
             return f"Impossibile leggere il repo {repo_name}. Status: {response.status_code}"
             
@@ -294,7 +294,7 @@ def check_baserow_leads(limit: int = 3) -> str:
     url = f"https://api.baserow.io/api/database/rows/table/{table_id}/?size={limit}&user_field_names=true"
     
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=10)
         if response.status_code != 200:
             return f"Impossibile leggere da Baserow. Status: {response.status_code}"
             
@@ -330,6 +330,10 @@ def check_supabase_logs(project: str = "TOM", table_name: str = "logs", limit: i
         table_name: Il nome della tabella da leggere (es. 'logs', 'users'). Default 'logs'.
         limit: Il numero massimo di righe da recuperare (default 5).
     """
+    allowed_tables = ['logs', 'tickets', 'thread_summaries']
+    if table_name not in allowed_tables:
+        return f"⚠️ Accesso negato alla tabella '{table_name}'. Tabelle consentite: {', '.join(allowed_tables)}."
+
     project = project.upper()
     if project == "BUN":
         url = os.environ.get("SUPABASE_BUN_URL")
@@ -352,16 +356,16 @@ def check_supabase_logs(project: str = "TOM", table_name: str = "logs", limit: i
     api_url = f"{url}/rest/v1/{table_name}?order=created_at.desc"
     
     try:
-        response = requests.get(api_url, headers=headers)
+        response = requests.get(api_url, headers=headers, timeout=10)
         if response.status_code == 400 and "created_at" in response.text:
             print("created_at not found, trying sorting by id.desc")
             api_url = f"{url}/rest/v1/{table_name}?order=id.desc"
-            response = requests.get(api_url, headers=headers)
+            response = requests.get(api_url, headers=headers, timeout=10)
             
         if response.status_code == 400 and "id" in response.text:
             print("id not found, trying query without ordering")
             api_url = f"{url}/rest/v1/{table_name}"
-            response = requests.get(api_url, headers=headers)
+            response = requests.get(api_url, headers=headers, timeout=10)
             
         if response.status_code != 200:
             return f"Impossibile leggere la tabella {table_name} su Supabase ({project}). Status: {response.status_code}"
@@ -451,7 +455,7 @@ def create_handyman_ticket(
 
     try:
         api_url = f"{url}/rest/v1/tickets"
-        response = requests.post(api_url, json=payload, headers=headers)
+        response = requests.post(api_url, json=payload, headers=headers, timeout=10)
         
         if response.status_code in [200, 201]:
             created_ticket = response.json()[0]
@@ -587,7 +591,7 @@ def check_ga_analytics(project: str = "ZIREL", days: int = 7) -> str:
                 {"name": "screenPageViews"}
             ]
         }
-        totals_resp = requests.post(api_url, json=totals_payload, headers=headers)
+        totals_resp = requests.post(api_url, json=totals_payload, headers=headers, timeout=10)
         if totals_resp.status_code != 200:
             return f"❌ Errore GA4 API (totali): {totals_resp.status_code} — {totals_resp.text}"
 
@@ -605,7 +609,7 @@ def check_ga_analytics(project: str = "ZIREL", days: int = 7) -> str:
             "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
             "limit": 5
         }
-        pages_resp = requests.post(api_url, json=pages_payload, headers=headers)
+        pages_resp = requests.post(api_url, json=pages_payload, headers=headers, timeout=10)
         if pages_resp.status_code != 200:
             return f"❌ Errore GA4 API (pagine): {pages_resp.status_code} — {pages_resp.text}"
 
@@ -658,12 +662,20 @@ def generate_handyman_quote(
         notes: Note o condizioni aggiuntive opzionali (es. garanzie, validità).
     """
     import json
+    import html
     from datetime import datetime
     try:
         items = json.loads(items_json)
     except Exception:
         return "⚠️ Errore nel formato delle voci di spesa inviate a Tom."
         
+    # Escape inputs to prevent HTML injection in Weasyprint PDF compilation
+    customer_name = html.escape(customer_name or "")
+    city = html.escape(city or "")
+    address = html.escape(address or "")
+    if notes:
+        notes = html.escape(notes)
+
     data_oggi = datetime.now().strftime('%d/%m/%Y')
     
     # 1. Fetch Supabase credentials and compute next sequential number
@@ -681,7 +693,7 @@ def generate_handyman_quote(
         try:
             # Query last 100 tickets created in current year to find highest quote number
             api_url = f"{url}/rest/v1/tickets?select=meta_data&created_at=gte.{current_year}-01-01T00:00:00"
-            resp = requests.get(api_url, headers=headers)
+            resp = requests.get(api_url, headers=headers, timeout=10)
             if resp.status_code == 200:
                 tickets_data = resp.json()
                 max_num = 0
@@ -710,8 +722,8 @@ def generate_handyman_quote(
     # Costruzione dinamica delle righe della tabella in HTML
     table_rows = ""
     for item in items:
-        desc = item.get('description', '')
-        sub_desc = item.get('details', '')
+        desc = html.escape(item.get('description', ''))
+        sub_desc = html.escape(item.get('details', ''))
         price = item.get('price', 0)
         
         desc_html = f"<strong>{desc}</strong>"
@@ -1043,7 +1055,7 @@ def generate_handyman_quote(
             from urllib.parse import quote
             escaped_name = quote(customer_name)
             cust_url = f"{url}/rest/v1/tickets?customer_name=ilike.{escaped_name}&order=created_at.desc&limit=1"
-            resp = requests.get(cust_url, headers=headers)
+            resp = requests.get(cust_url, headers=headers, timeout=10)
             if resp.status_code == 200 and resp.json():
                 ticket = resp.json()[0]
                 ticket_id = ticket.get("id")
@@ -1073,7 +1085,7 @@ def generate_handyman_quote(
                     "Prefer": "return=representation"
                 }
                 create_url = f"{url}/rest/v1/tickets"
-                resp = requests.post(create_url, json=new_ticket_payload, headers=post_headers)
+                resp = requests.post(create_url, json=new_ticket_payload, headers=post_headers, timeout=10)
                 if resp.status_code in [200, 201] and resp.json():
                     new_ticket = resp.json()[0]
                     ticket_id = new_ticket.get("id")
@@ -1101,7 +1113,7 @@ def generate_handyman_quote(
                     "meta_data": updated_meta,
                     "price_range_max": totale_complessivo
                 }
-                resp = requests.patch(update_url, json=update_payload, headers=patch_headers)
+                resp = requests.patch(update_url, json=update_payload, headers=patch_headers, timeout=10)
                 if resp.status_code in [200, 204]:
                     print(f"DEBUG: Ticket {ticket_id} updated successfully with quote {num_preventivo}")
                 else:

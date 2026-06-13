@@ -1,6 +1,6 @@
 import os
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from slack_sdk import WebClient
 
@@ -19,13 +19,13 @@ def run_cron():
     slack_client = WebClient(token=slack_token)
     
     # Calculate timestamps: between 4 days ago (96 hours) and 5 days ago (120 hours)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     four_days_ago = now - timedelta(days=4)
     five_days_ago = now - timedelta(days=5)
     
     # Format to ISO 8601 with Z timezone
-    four_days_iso = four_days_ago.isoformat() + "Z"
-    five_days_iso = five_days_ago.isoformat() + "Z"
+    four_days_iso = four_days_ago.isoformat().replace("+00:00", "Z")
+    five_days_iso = five_days_ago.isoformat().replace("+00:00", "Z")
     
     print(f"Checking tickets completed between {five_days_iso} and {four_days_iso} with no review...")
     
@@ -74,9 +74,10 @@ def run_cron():
                 f"Una volta fatta, puoi inserire la recensione nel gestionale."
             )
             
-            # Send message to #handyman (C0BA846TML2)
+            # Send message to handyman channel
+            channel_id = os.environ.get("SLACK_HANDYMAN_CHANNEL_ID", "C0BA846TML2")
             try:
-                slack_client.chat_postMessage(channel="C0BA846TML2", text=message)
+                slack_client.chat_postMessage(channel=channel_id, text=message)
                 print(f"Sent reminder for ticket {ticket_id} ({customer_name})")
             except Exception as slack_err:
                 print(f"❌ Failed to send Slack message for ticket {ticket_id}: {slack_err}")

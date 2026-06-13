@@ -782,7 +782,7 @@ def handle_message_events(body, say, client):
                             continue
                         try:
                             file_bytes = download_slack_file(url)
-                            if mimetype.startswith("image/"):
+                            if mimetype.startswith("image/") or mimetype.startswith("audio/"):
                                 parts.append(types.Part.from_bytes(data=file_bytes, mime_type=mimetype))
                             elif mimetype.startswith("text/") or mimetype in ("application/json", "application/javascript", "text/plain") or name.endswith(('.log', '.py', '.js', '.ts', '.html', '.css', '.json', '.txt')):
                                 text_content = file_bytes.decode("utf-8", errors="ignore")

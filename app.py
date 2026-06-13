@@ -1,5 +1,6 @@
 import os
 import requests
+import threading
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from slack_bolt import App
@@ -30,11 +31,18 @@ deepseek_client = OpenAI(
     base_url="https://api.deepseek.com"
 )
 
+# Global session for reusing HTTP connections to Supabase
+supabase_session = requests.Session()
+
+# Global set to track active summary workers (prevents race conditions)
+active_summary_workers = set()
+workers_lock = threading.Lock()
+
 # Helper function to download files from Slack
 def download_slack_file(url):
     token = os.environ.get("SLACK_BOT_TOKEN")
     headers = {"Authorization": f"Bearer {token}"}
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=headers, timeout=15)
     if response.status_code == 200:
         return response.content
     else:
@@ -54,7 +62,7 @@ def get_thread_summary(channel_id: str, thread_ts: str = None) -> str:
     }
     try:
         api_url = f"{url}/rest/v1/thread_summaries?channel_id=eq.{channel_id}&thread_ts=eq.{ts_val}&limit=1"
-        resp = requests.get(api_url, headers=headers)
+        resp = supabase_session.get(api_url, headers=headers, timeout=5)
         if resp.status_code == 200 and resp.json():
             return resp.json()[0].get("summary", "")
     except Exception as e:
@@ -63,15 +71,21 @@ def get_thread_summary(channel_id: str, thread_ts: str = None) -> str:
 
 # Helper to update thread summary from Supabase in background
 def update_thread_summary_bg(channel_id: str, thread_ts: str = None):
-    import os
-    import requests
     from datetime import datetime
     from slack_sdk import WebClient
     
-    slack_client = WebClient(token=os.environ.get("SLACK_BOT_TOKEN"))
-    ts_val = thread_ts or ""
+    worker_key = f"{channel_id}:{thread_ts or ''}"
     
+    with workers_lock:
+        if worker_key in active_summary_workers:
+            print(f"⚠️ Worker già attivo per il thread {worker_key}. Salto questo turno.")
+            return
+        active_summary_workers.add(worker_key)
+        
     try:
+        slack_client = WebClient(token=os.environ.get("SLACK_BOT_TOKEN"))
+        ts_val = thread_ts or ""
+        
         if thread_ts:
             history_response = slack_client.conversations_replies(channel=channel_id, ts=thread_ts, limit=100)
         else:
@@ -94,18 +108,17 @@ def update_thread_summary_bg(channel_id: str, thread_ts: str = None):
         dialogue_text = "\n".join(dialogue)
         
         summary_prompt = (
-            "Analizza la seguente conversazione tra l'utente (tecnico/elettricista) e l'assistente AI Tom (Jarvis).\n"
-            "Crea un riassunto estremamente conciso e strutturato dei fatti chiave decisi e delle informazioni utili emerse finora.\n\n"
-            "Focalizzati su:\n"
-            "- Oggetto del lavoro e cliente (se menzionati).\n"
-            "- Decisioni tecniche prese (es. sezioni cavi scelte, tipo pettine, collegamenti decisi).\n"
-            "- Stato dell'intervento (es. preventivo generato, materiali da acquistare, sopralluogo fatto/da fare).\n"
-            "Evita convenevoli. Scrivi solo fatti concreti in formato elenco puntato.\n\n"
-            f"CONVERSAZIONE:\n{dialogue_text}"
+            "Analizza la seguente conversazione di Slack ed estrai un riassunto esecutivo, "
+            "estremamente conciso (MASSIMO 150 parole o 5 punti elenco). "
+            "Concentrati esclusivamente su: decisioni prese, dettagli tecnici concordati, "
+            "dati importanti (numeri, codici, scadenze) e lo stato attuale del lavoro. "
+            "Elimina i saluti e i convenevoli. Cronologia:\n\n"
+            f"{dialogue_text}"
         )
         
+        print(f"🧠 Generazione nuovo Dynamic Summary per il thread {worker_key}...")
         resp = gemini_client.models.generate_content(
-            model="gemini-3.1-flash-lite",
+            model="gemini-2.5-flash",
             contents=summary_prompt,
             config=types.GenerateContentConfig(
                 system_instruction="Sei un analista di log e cronologia chat. Generi riassunti strutturati dei fatti chiave senza prefazioni."
@@ -113,6 +126,7 @@ def update_thread_summary_bg(channel_id: str, thread_ts: str = None):
         )
         summary = resp.text
         if not summary or not summary.strip():
+            print("⚠️ Il riassunto generato è vuoto. Operazione annullata.")
             return
             
         url = os.environ.get("SUPABASE_TOM_URL")
@@ -127,18 +141,21 @@ def update_thread_summary_bg(channel_id: str, thread_ts: str = None):
             payload = {
                 "channel_id": channel_id,
                 "thread_ts": ts_val,
-                "summary": summary,
+                "summary": summary.strip(),
                 "updated_at": datetime.now().isoformat()
             }
             upsert_url = f"{url}/rest/v1/thread_summaries"
-            r = requests.post(upsert_url, json=payload, headers=upsert_headers)
+            r = supabase_session.post(upsert_url, json=payload, headers=upsert_headers, timeout=10)
             if r.status_code in [200, 201, 204]:
-                print(f"DEBUG: Successfully upserted thread summary for {channel_id} / {ts_val}")
+                print(f"✅ Dynamic Summary aggiornato con successo su Supabase per {worker_key}.")
             else:
-                print(f"DEBUG: Failed to upsert thread summary: {r.status_code} - {r.text}")
+                print(f"❌ Errore Supabase durante l'upsert ({r.status_code}): {r.text}")
                 
     except Exception as e:
-        print(f"⚠️ Error updating thread summary: {e}")
+        print(f"❌ Eccezione critica nel Worker in background per {worker_key}: {e}")
+    finally:
+        with workers_lock:
+            active_summary_workers.discard(worker_key)
 
 # Helper to call Gemini with a robust fallback chain and tools support
 def call_gemini(model_name, contents, system_instruction, tools=None):

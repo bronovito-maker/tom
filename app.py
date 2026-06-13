@@ -40,6 +40,106 @@ def download_slack_file(url):
     else:
         raise Exception(f"Failed to download file: HTTP {response.status_code}")
 
+# Helper to retrieve thread summary from Supabase
+def get_thread_summary(channel_id: str, thread_ts: str = None) -> str:
+    url = os.environ.get("SUPABASE_TOM_URL")
+    key = os.environ.get("SUPABASE_TOM_SERVICE_ROLE_KEY")
+    if not url or not key:
+        return ""
+    
+    ts_val = thread_ts or ""
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}"
+    }
+    try:
+        api_url = f"{url}/rest/v1/thread_summaries?channel_id=eq.{channel_id}&thread_ts=eq.{ts_val}&limit=1"
+        resp = requests.get(api_url, headers=headers)
+        if resp.status_code == 200 and resp.json():
+            return resp.json()[0].get("summary", "")
+    except Exception as e:
+        print(f"⚠️ Error fetching thread summary: {e}")
+    return ""
+
+# Helper to update thread summary from Supabase in background
+def update_thread_summary_bg(channel_id: str, thread_ts: str = None):
+    import os
+    import requests
+    from datetime import datetime
+    from slack_sdk import WebClient
+    
+    slack_client = WebClient(token=os.environ.get("SLACK_BOT_TOKEN"))
+    ts_val = thread_ts or ""
+    
+    try:
+        if thread_ts:
+            history_response = slack_client.conversations_replies(channel=channel_id, ts=thread_ts, limit=100)
+        else:
+            history_response = slack_client.conversations_history(channel=channel_id, limit=100)
+            
+        messages = history_response.get("messages", [])
+        if len(messages) <= 8:
+            return
+            
+        if not thread_ts:
+            messages.reverse()
+            
+        dialogue = []
+        for msg in messages:
+            author = "TOM (AI)" if ("bot_id" in msg or msg.get("bot_profile") is not None) else "USER"
+            text = msg.get("text", "")
+            if text:
+                dialogue.append(f"{author}: {text}")
+                
+        dialogue_text = "\n".join(dialogue)
+        
+        summary_prompt = (
+            "Analizza la seguente conversazione tra l'utente (tecnico/elettricista) e l'assistente AI Tom (Jarvis).\n"
+            "Crea un riassunto estremamente conciso e strutturato dei fatti chiave decisi e delle informazioni utili emerse finora.\n\n"
+            "Focalizzati su:\n"
+            "- Oggetto del lavoro e cliente (se menzionati).\n"
+            "- Decisioni tecniche prese (es. sezioni cavi scelte, tipo pettine, collegamenti decisi).\n"
+            "- Stato dell'intervento (es. preventivo generato, materiali da acquistare, sopralluogo fatto/da fare).\n"
+            "Evita convenevoli. Scrivi solo fatti concreti in formato elenco puntato.\n\n"
+            f"CONVERSAZIONE:\n{dialogue_text}"
+        )
+        
+        resp = gemini_client.models.generate_content(
+            model="gemini-3.1-flash-lite",
+            contents=summary_prompt,
+            config=types.GenerateContentConfig(
+                system_instruction="Sei un analista di log e cronologia chat. Generi riassunti strutturati dei fatti chiave senza prefazioni."
+            )
+        )
+        summary = resp.text
+        if not summary or not summary.strip():
+            return
+            
+        url = os.environ.get("SUPABASE_TOM_URL")
+        key = os.environ.get("SUPABASE_TOM_SERVICE_ROLE_KEY")
+        if url and key:
+            upsert_headers = {
+                "apikey": key,
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates"
+            }
+            payload = {
+                "channel_id": channel_id,
+                "thread_ts": ts_val,
+                "summary": summary,
+                "updated_at": datetime.now().isoformat()
+            }
+            upsert_url = f"{url}/rest/v1/thread_summaries"
+            r = requests.post(upsert_url, json=payload, headers=upsert_headers)
+            if r.status_code in [200, 201, 204]:
+                print(f"DEBUG: Successfully upserted thread summary for {channel_id} / {ts_val}")
+            else:
+                print(f"DEBUG: Failed to upsert thread summary: {r.status_code} - {r.text}")
+                
+    except Exception as e:
+        print(f"⚠️ Error updating thread summary: {e}")
+
 # Helper to call Gemini with a robust fallback chain and tools support
 def call_gemini(model_name, contents, system_instruction, tools=None):
     config_obj = types.GenerateContentConfig(
@@ -773,6 +873,12 @@ def handle_message_events(body, say, client):
         # Fallback to current message only if history API fails
         slack_messages = [event]
 
+    # Fetch thread/channel summary
+    riassunto = get_thread_summary(channel_id, thread_ts)
+    system_instruction_dynamic = config["system"]
+    if riassunto:
+        system_instruction_dynamic += f"\n\n[CONTESTO PRECEDENTE DEL THREAD - LEGGIMI MA NON RIPETERE]:\n{riassunto}"
+
     try:
         if config["provider"] == "gemini":
             # Build history contents for Gemini
@@ -833,7 +939,7 @@ def handle_message_events(body, say, client):
             gemini_response = call_gemini(
                 model_name=config["model"],
                 contents=gemini_contents,
-                system_instruction=config["system"],
+                system_instruction=system_instruction_dynamic,
                 tools=tools_list
             )
 
@@ -988,7 +1094,7 @@ def handle_message_events(body, say, client):
                 gemini_response = call_gemini(
                     model_name=config["model"],
                     contents=gemini_contents,
-                    system_instruction=config["system"],
+                    system_instruction=system_instruction_dynamic,
                     tools=tools_list
                 )
 
@@ -1034,7 +1140,7 @@ def handle_message_events(body, say, client):
             full_deepseek_prompt = "\n".join(deepseek_prompt_parts)
 
             # Build DeepSeek message history
-            deepseek_messages = [{"role": "system", "content": config["system"]}]
+            deepseek_messages = [{"role": "system", "content": system_instruction_dynamic}]
             
             for msg in slack_messages:
                 role = "assistant" if ("bot_id" in msg or msg.get("bot_profile") is not None) else "user"
@@ -1072,6 +1178,10 @@ def handle_message_events(body, say, client):
                 say(risposta_ai)
         else:
             print("⚠️ Warning: risposta_ai is empty or None. Not sending empty message to Slack.")
+
+        # Trigger summary update in background
+        import threading
+        threading.Thread(target=update_thread_summary_bg, args=(channel_id, thread_ts), daemon=True).start()
 
     except Exception as e:
         error_msg = f"⚠️ C'è stato un problema di comunicazione con l'agente ({config['provider']}): {str(e)}"

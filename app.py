@@ -1,6 +1,7 @@
 import os
 import requests
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from slack_bolt import App
@@ -878,42 +879,76 @@ def handle_message_events(body, say, client):
 
     print(f"🔹 Received message in channel {channel_id} from user {user}: {redact_pii(text)} (Attachments: {len(files)})")
 
+    # Send an immediate placeholder so Slack does not appear unresponsive while
+    # the history, summary, and model request are being processed.
+    pending_response_ts = None
+    try:
+        if thread_ts:
+            pending_response = say(text="⏳ Sto elaborando…", thread_ts=thread_ts)
+        else:
+            pending_response = say("⏳ Sto elaborando…")
+        pending_response_ts = pending_response.get("ts") if pending_response else None
+    except Exception as placeholder_err:
+        print(f"⚠️ Could not send processing placeholder: {placeholder_err}")
+
     # Retrieve agent config based on channel
     config = CHANNELS.get(channel_id, DEFAULT_CONFIG)
     
-    # 1. Fetch channel or thread history for context
+    # 1. Fetch history and the summary concurrently: they are independent
+    # read-only requests and this removes one network round-trip from the path.
     slack_messages = []
-    try:
+
+    def fetch_slack_history():
         if thread_ts:
             print(f"DEBUG: Fetching thread replies for thread {thread_ts} (limit=25)...")
-            history_response = client.conversations_replies(channel=channel_id, ts=thread_ts, limit=25)
-        else:
-            print(f"DEBUG: Fetching main channel history (limit=25)...")
-            history_response = client.conversations_history(channel=channel_id, limit=25)
-        
-        if not history_response.get("ok", True):
-            error_type = history_response.get("error", "unknown")
-            print(f"⚠️ Slack API error fetching history: {error_type}")
-            slack_messages = [event]
-        else:
-            slack_messages = history_response.get("messages", [])
-        
-        # Only reverse for main channel history (which is newest-to-oldest)
-        # Thread replies are already oldest-to-newest
-        if not thread_ts and slack_messages:
-            slack_messages.reverse()  # Oldest first
-            
-    except Exception as history_err:
-        error_str = str(history_err)
-        if "ratelimited" in error_str.lower() or "429" in error_str:
-            print(f"⚠️ Slack rate limited during history fetch. Using current message only.")
-        else:
-            print(f"⚠️ Warning: Failed to fetch channel history: {history_err}")
-        # Fallback to current message only if history API fails
-        slack_messages = [event]
+            return client.conversations_replies(channel=channel_id, ts=thread_ts, limit=25)
+        print(f"DEBUG: Fetching main channel history (limit=25)...")
+        return client.conversations_history(channel=channel_id, limit=25)
 
-    # Fetch thread/channel summary
-    riassunto = get_thread_summary(channel_id, thread_ts)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        history_future = executor.submit(fetch_slack_history)
+        summary_future = executor.submit(get_thread_summary, channel_id, thread_ts)
+
+        try:
+            history_response = history_future.result()
+            if not history_response.get("ok", True):
+                error_type = history_response.get("error", "unknown")
+                print(f"⚠️ Slack API error fetching history: {error_type}")
+                slack_messages = [event]
+            else:
+                slack_messages = history_response.get("messages", [])
+
+            # Only reverse for main channel history (which is newest-to-oldest)
+            # Thread replies are already oldest-to-newest.
+            if not thread_ts and slack_messages:
+                slack_messages.reverse()
+
+            # The placeholder was posted before this read; never feed it back
+            # to the model as part of the conversation history.
+            if pending_response_ts:
+                slack_messages = [
+                    msg for msg in slack_messages
+                    if msg.get("ts") != pending_response_ts
+                ]
+        except Exception as history_err:
+            error_str = str(history_err)
+            if "ratelimited" in error_str.lower() or "429" in error_str:
+                print("⚠️ Slack rate limited during history fetch. Using current message only.")
+            else:
+                print(f"⚠️ Warning: Failed to fetch channel history: {history_err}")
+            slack_messages = [event]
+
+        # get_thread_summary already handles its own failures and returns "".
+        riassunto = summary_future.result()
+
+    # Keep the full history until a persisted summary is available. Once the
+    # summary is present, it carries the older context and we only need the
+    # latest 15 messages for the model. The ENI system prompt is untouched.
+    context_messages = slack_messages
+    if riassunto and len(slack_messages) > 15:
+        context_messages = slack_messages[-15:]
+        print(f"🧠 Using summary plus latest {len(context_messages)} Slack messages for context.")
+
     system_instruction_dynamic = config["system"]
 
     # Inject current date dynamically at runtime in Europe/Rome timezone
@@ -945,7 +980,7 @@ def handle_message_events(body, say, client):
             # Build history contents for Gemini
             gemini_contents = []
             
-            for msg in slack_messages:
+            for msg in context_messages:
                 # Determine role: bot messages are 'model', user messages are 'user'
                 role = "model" if ("bot_id" in msg or msg.get("bot_profile") is not None) else "user"
                 parts = []
@@ -1206,7 +1241,7 @@ def handle_message_events(body, say, client):
             # Build DeepSeek message history
             deepseek_messages = [{"role": "system", "content": system_instruction_dynamic}]
             
-            for msg in slack_messages:
+            for msg in context_messages:
                 role = "assistant" if ("bot_id" in msg or msg.get("bot_profile") is not None) else "user"
                 if msg.get("ts") == current_ts:
                     deepseek_messages.append({"role": role, "content": full_deepseek_prompt})
@@ -1236,7 +1271,20 @@ def handle_message_events(body, say, client):
 
         # Say message in Slack channel only if non-empty
         if risposta_ai and risposta_ai.strip():
-            if thread_ts:
+            if pending_response_ts:
+                try:
+                    client.chat_update(
+                        channel=channel_id,
+                        ts=pending_response_ts,
+                        text=risposta_ai
+                    )
+                except Exception as update_err:
+                    print(f"⚠️ Could not update processing placeholder: {update_err}")
+                    if thread_ts:
+                        say(text=risposta_ai, thread_ts=thread_ts)
+                    else:
+                        say(risposta_ai)
+            elif thread_ts:
                 say(text=risposta_ai, thread_ts=thread_ts)
             else:
                 say(risposta_ai)
@@ -1265,6 +1313,3 @@ if __name__ == "__main__":
         port = int(os.environ.get("PORT", 3000))
         print(f"⚡ Jarvis Core is online and listening to Slack events on port {port}!")
         uvicorn.run("app:api", host="0.0.0.0", port=port, reload=True)
-
-
-
